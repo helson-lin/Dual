@@ -19,6 +19,7 @@
 - `macos-15` runner 打 `arm64`
 - 每个架构同时导出 `.zip` 和 `.dmg`
 - `.dmg` 会使用仓库根目录的 `background.png` 作为背景图，并在打包时缩放到 `660x400`
+- GitHub Actions 的无界面环境会自动回退为普通 `.dmg`，避免 Finder/AppleScript 导致打包失败
 - 打 tag 时会把两个包自动上传到 GitHub Release
 
 本地也可以直接复用同一套脚本：
