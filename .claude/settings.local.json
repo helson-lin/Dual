@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/lin/person/Dual -type f \\\\\\(-name package.json -o -name Makefile -o -name Procfile -o -name docker-compose.yml -o -name .env* -o -name *.sh -o -name *.pbxproj -o -name *.xcworkspace \\\\\\))",
+      "Bash(find /Users/lin/person/Dual -maxdepth 2 -name .env* -o -name *.sh -o -name Makefile -o -name Procfile)"
+    ]
+  }
+}

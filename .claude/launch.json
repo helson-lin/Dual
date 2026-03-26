@@ -1,0 +1,16 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Dual (Debug Build)",
+      "runtimeExecutable": "xcodebuild",
+      "runtimeArgs": [
+        "-project", "Dual.xcodeproj",
+        "-scheme", "Dual",
+        "-configuration", "Debug",
+        "build"
+      ],
+      "port": 0
+    }
+  ]
+}

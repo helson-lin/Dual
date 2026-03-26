@@ -1,0 +1,9 @@
+.build/
+.derived/
+.derived-build.log
+.dmg-*.log
+.dmg-staging/
+.dmg-staging-release/
+.release/
+.release-package/
+Dual-macOS.dmg

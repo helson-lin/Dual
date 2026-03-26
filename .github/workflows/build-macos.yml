@@ -1,0 +1,68 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+            label: intel
+          - runner: macos-15
+            arch: arm64
+            label: apple-silicon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build release artifact
+        id: package
+        env:
+          ARCH: ${{ matrix.arch }}
+          ARTIFACT_LABEL: ${{ matrix.label }}
+        run: |
+          chmod +x scripts/build-release.sh
+          ./scripts/build-release.sh
+
+      - name: Upload packaged app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dual-macos-${{ matrix.label }}
+          path: |
+            ${{ steps.package.outputs.artifact_path }}
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.artifact_sha256_path }}
+            ${{ steps.package.outputs.dmg_sha256_path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG_NAME" >/dev/null 2>&1 || gh release create "$TAG_NAME" --generate-notes
+          find dist -type f -maxdepth 2 -print0 | xargs -0 gh release upload "$TAG_NAME" --clobber
