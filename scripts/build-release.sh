@@ -9,7 +9,7 @@ ARTIFACT_LABEL="${ARTIFACT_LABEL:-$ARCH}"
 BUILD_ROOT="${BUILD_ROOT:-$PWD/.build}"
 BACKGROUND_SOURCE="${BACKGROUND_SOURCE:-$PWD/background.png}"
 DMG_WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-660}"
-DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-440}"
+DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-400}"
 
 ARCHIVE_PATH="$BUILD_ROOT/archives/${SCHEME}-${ARTIFACT_LABEL}.xcarchive"
 DERIVED_DATA_PATH="$BUILD_ROOT/DerivedData-${ARTIFACT_LABEL}"
@@ -66,33 +66,44 @@ fi
 
 sips -z "$DMG_WINDOW_HEIGHT" "$DMG_WINDOW_WIDTH" "$BACKGROUND_SOURCE" --out "$DMG_STAGING_DIR/.background/background.png" >/dev/null
 
-hdiutil create \
-  -srcfolder "$DMG_STAGING_DIR" \
-  -volname "$SCHEME" \
-  -fs HFS+ \
-  -format UDRW \
-  -ov \
-  "$DMG_RW_PATH" >/dev/null
-
-MOUNT_DIR="$DMG_TEMP_DIR/mount"
-mkdir -p "$MOUNT_DIR"
-
-ATTACH_OUTPUT=$(hdiutil attach -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR" "$DMG_RW_PATH")
-DEVICE=$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/Apple_HFS/ {print $1; exit}')
-WINDOW_RIGHT=$((100 + DMG_WINDOW_WIDTH))
-WINDOW_BOTTOM=$((100 + DMG_WINDOW_HEIGHT))
-
-cleanup_dmg() {
-  if [[ -n "${DEVICE:-}" ]]; then
-    hdiutil detach "$DEVICE" -quiet || true
-  fi
+create_plain_dmg() {
+  echo "note: using plain DMG packaging"
+  hdiutil create \
+    -srcfolder "$DMG_STAGING_DIR" \
+    -volname "$SCHEME" \
+    -ov \
+    -format UDZO \
+    "$DMG_PATH" >/dev/null
 }
 
-trap cleanup_dmg EXIT
+create_styled_dmg() {
+  hdiutil create \
+    -srcfolder "$DMG_STAGING_DIR" \
+    -volname "$SCHEME" \
+    -fs HFS+ \
+    -format UDRW \
+    -ov \
+    "$DMG_RW_PATH" >/dev/null
 
-/usr/bin/SetFile -a V "$MOUNT_DIR/.background"
+  MOUNT_DIR="$DMG_TEMP_DIR/mount"
+  mkdir -p "$MOUNT_DIR"
 
-osascript <<EOF
+  ATTACH_OUTPUT=$(hdiutil attach -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR" "$DMG_RW_PATH")
+  DEVICE=$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/Apple_HFS/ {print $1; exit}')
+  WINDOW_RIGHT=$((100 + DMG_WINDOW_WIDTH))
+  WINDOW_BOTTOM=$((100 + DMG_WINDOW_HEIGHT))
+
+  cleanup_dmg() {
+    if [[ -n "${DEVICE:-}" ]]; then
+      hdiutil detach "$DEVICE" -quiet || true
+    fi
+  }
+
+  trap cleanup_dmg EXIT
+
+  /usr/bin/SetFile -a V "$MOUNT_DIR/.background"
+
+  osascript <<EOF
 set bgAlias to POSIX file "$MOUNT_DIR/.background/background.png" as alias
 tell application "Finder"
   tell disk "$SCHEME"
@@ -116,11 +127,24 @@ tell application "Finder"
 end tell
 EOF
 
-sync
-hdiutil detach "$DEVICE" -quiet
-trap - EXIT
+  sync
+  hdiutil detach "$DEVICE" -quiet
+  trap - EXIT
 
-hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
+  hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
+}
+
+if [[ -n "${CI:-}" ]]; then
+  create_plain_dmg
+else
+  if ! create_styled_dmg; then
+    echo "warning: styled DMG packaging failed, falling back to plain DMG" >&2
+    rm -f "$DMG_PATH" "$DMG_RW_PATH"
+    rm -rf "$DMG_TEMP_DIR/mount"
+    trap - EXIT
+    create_plain_dmg
+  fi
+fi
 
 shasum -a 256 "$ZIP_PATH" | tee "$ZIP_PATH.sha256"
 shasum -a 256 "$DMG_PATH" | tee "$DMG_PATH.sha256"
