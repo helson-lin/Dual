@@ -2,125 +2,37 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-本仓库包含 macOS 应用工程及其发布打包流程。
+Dual 是一款 macOS 应用，用于将应用 bundle 克隆成一个新的独立副本，并赋予新的名称、Bundle ID 和应用身份。它适合需要创建第二个应用实例的人，例如测试、隔离账号或多开场景。
 
-## GitHub Actions 发布流程
+## 项目做什么
 
-仓库内已包含 GitHub Actions 工作流 `.github/workflows/build-macos.yml`。
+- 将选中的 `.app` bundle 克隆到新的目标位置。
+- 重写克隆应用的 `Info.plist`，设置新的显示名和 Bundle ID。
+- 在源应用使用 helper bundle 时，对相关 helper 进行重命名，保证副本仍然可以正常启动。
+- 清理旧的 quarantine 数据，并对结果重新签名。
+- 可选地在创建副本前清理旧的克隆数据。
+- 在目标目录需要权限时，可通过管理员权限完成复制。
+- 提供实时日志面板、执行状态和完成后的 Finder 定位按钮。
 
-### 触发方式
+## 核心功能
 
-- 手动触发：在 GitHub Actions 中运行 `Build macOS`。
-- Tag 发布：推送形如 `v1.0.0` 的 tag。
+- 支持将任意 `.app` 直接拖拽到窗口中。
+- 会从 `/Applications` 和 `~/Applications` 中快速推荐常见应用。
+- 可自定义副本名称和 Bundle ID。
+- 支持选择目标目录，并处理目录可写性。
+- UI 同时提供英文和简体中文。
+- 具有 macOS 风格的界面、实时进度和成功状态展示。
 
-### 手动触发时可选发布到 GitHub Release
+## 工作方式
 
-手动运行工作流时，也可以把构建产物发布到 GitHub Releases：
+应用界面使用 SwiftUI 实现，底层由 `AppCloner` 流程负责实际克隆。该流程会复制源应用、更新身份元数据、在必要时应用具体应用所需的兼容性修复，并重新签名，从而让副本可以正常启动。
 
-- 将 `release_tag` 设置为类似 `v1.0.0` 的 tag 名称。
-- 工作流会创建或更新对应的 GitHub Release，并上传生成的产物。
+## 构建与发布
 
-### 生成产物
+仓库包含 GitHub Actions 工作流，会为 Intel 和 Apple Silicon 构建 macOS 的 `zip` 和 `dmg` 产物，并在打 tag 或手动触发时发布到 GitHub Releases。
 
-每次运行都会构建两个 macOS 架构，并产出：
+## 项目结构
 
-- `Dual-<version>-<build>-macos-intel.zip`
-- `Dual-<version>-<build>-macos-intel.dmg`
-- `Dual-<version>-<build>-macos-apple-silicon.zip`
-- `Dual-<version>-<build>-macos-apple-silicon.dmg`
-- 对应的 `.sha256` 校验文件
-
-### 实现说明
-
-- `macos-15-intel` 用于构建 `x86_64` 包。
-- `macos-15` 用于构建 `arm64` 包。
-- 每个架构都会同时导出 `.zip` 和 `.dmg`。
-- `.dmg` 使用仓库根目录的 `background.png` 作为背景图。
-- 推送 `v*` tag 时，会自动将构建产物上传到 GitHub Releases。
-- 手动运行工作流时，只有传入 `release_tag` 才会发布到 GitHub Releases。
-
-## 本地打包 Release
-
-你也可以在本地直接复用同一套打包脚本：
-
-```bash
-ARCH=x86_64 ARTIFACT_LABEL=intel ./scripts/build-release.sh
-ARCH=arm64 ARTIFACT_LABEL=apple-silicon ./scripts/build-release.sh
-```
-
-构建输出会写入 `.build/` 目录。
-
-## 本地测试工具
-
-### 重新签名本地 App Bundle
-
-```bash
-chmod +x /Users/lin/person/Dual/scripts/re-sign-local.sh
-/Users/lin/person/Dual/scripts/re-sign-local.sh
-```
-
-该脚本会执行 ad-hoc 重签名，并输出 `codesign` 和 `spctl` 校验结果。
-
-### 移除 Quarantine 属性
-
-```bash
-chmod +x /Users/lin/person/Dual/scripts/remove-quarantine.sh
-/Users/lin/person/Dual/scripts/remove-quarantine.sh
-```
-
-该脚本仅移除 quarantine 标记，不能替代签名或 notarization。
-
-## 手动克隆 App 的说明
-
-如果你是在手动复制一个 Electron app bundle，通常步骤如下：
-
-1. 复制 app bundle：
-
-   ```bash
-   ditto --norsrc --noqtn /Applications/Notion.app /Applications/Notion2.app
-   ```
-
-2. 修改主 `Info.plist`：
-   - 修改 `CFBundleIdentifier`
-   - 修改 `CFBundleName`
-   - 修改 `CFBundleDisplayName`
-   - 删除 `ElectronAsarIntegrity`
-
-3. 重命名所有 helper bundle：
-   - 重命名 bundle 目录
-   - 重命名可执行文件
-   - 更新每个 helper `Info.plist` 中的 `CFBundleExecutable` 和 `CFBundleIdentifier`
-   - 命名遵循主应用名加标准 helper 后缀
-
-4. 如有需要，补丁 Electron Framework fuse：
-   - sentinel: `dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX`
-   - offset: `sentinel + 32 + 2 + 4`
-   - 将 `'1'` 改成 `'0'`
-
-5. 清理 quarantine：
-
-   ```bash
-   xattr -cr /Applications/Notion2.app
-   ```
-
-6. 重新签名复制后的 app：
-
-   ```bash
-   codesign --force --deep --sign - /Applications/Notion2.app
-   ```
-
-## 重要说明
-
-- 如果没有注入额外 framework，通常不需要 `--options runtime` 或自定义 entitlements。
-- Helper bundle 必须正确重命名，否则 Electron 可能无法启动并直接以 `SIGTRAP` 退出。
-- fuse 补丁和移除 `ElectronAsarIntegrity` 只在部分 Electron 版本中需要。
-
-## 更简单的替代方案
-
-如果你的目标只是运行该应用的另一个实例，通常比复制 bundle 更稳妥的方式是使用独立的用户数据目录：
-
-```bash
-open -n /Applications/Notion.app --args --user-data-dir=~/Notion2
-```
-
-另一种方式是直接使用 Chrome 或 Edge 的 PWA，而不是复制 macOS app bundle。
+- `Dual/` - macOS 应用源代码
+- `scripts/` - 构建和本地维护脚本
+- `.github/workflows/` - GitHub Actions 打包工作流

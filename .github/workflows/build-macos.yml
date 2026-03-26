@@ -70,5 +70,7 @@ jobs:
           TAG_NAME: ${{ github.event.inputs.release_tag || github.ref_name }}
           TARGET_SHA: ${{ github.sha }}
         run: |
-          gh release view "$TAG_NAME" >/dev/null 2>&1 || gh release create "$TAG_NAME" --target "$TARGET_SHA" --generate-notes
-          find dist -type f -maxdepth 2 -print0 | xargs -0 gh release upload "$TAG_NAME" --clobber
+          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --generate-notes
+          find dist -type f -maxdepth 2 -print0 | while IFS= read -r -d '' file; do
+            gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$file"
+          done
