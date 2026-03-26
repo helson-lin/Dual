@@ -1,100 +1,126 @@
-## Electron App Clone (Stable Method)
+# Dual
 
-## GitHub Actions 打包
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-仓库已添加 GitHub Actions 工作流：
+This repository contains the macOS app project and its release packaging workflow.
 
-- 手动触发：GitHub Actions 里运行 `Build macOS`
-- 发布触发：推送 tag，例如 `v1.0.0`
-- 产物：
-  - `Dual-<version>-<build>-macos-intel.zip`
-  - `Dual-<version>-<build>-macos-intel.dmg`
-  - `Dual-<version>-<build>-macos-apple-silicon.zip`
-  - `Dual-<version>-<build>-macos-apple-silicon.dmg`
-  - 对应的 `.sha256` 校验文件
+## GitHub Actions Release Flow
 
-实现方式：
+The repository includes a GitHub Actions workflow at `.github/workflows/build-macos.yml`.
 
-- `macos-15-intel` runner 打 `x86_64`
-- `macos-15` runner 打 `arm64`
-- 每个架构同时导出 `.zip` 和 `.dmg`
-- `.dmg` 会使用仓库根目录的 `background.png` 作为背景图，并在打包时缩放到 `660x400`
-- GitHub Actions 的无界面环境会自动回退为普通 `.dmg`，避免 Finder/AppleScript 导致打包失败
-- 打 tag 时会把两个包自动上传到 GitHub Release
+### Triggers
 
-本地也可以直接复用同一套脚本：
+- Manual run: start the `Build macOS` workflow from GitHub Actions.
+- Tag release: push a tag such as `v1.0.0`.
+
+### Optional Manual Release Publishing
+
+When starting the workflow manually, you can also publish the build outputs to GitHub Releases:
+
+- Set `release_tag` to a tag name such as `v1.0.0`.
+- The workflow will create or update that GitHub Release and upload the generated assets.
+
+### Generated Artifacts
+
+Each run builds both macOS architectures and produces:
+
+- `Dual-<version>-<build>-macos-intel.zip`
+- `Dual-<version>-<build>-macos-intel.dmg`
+- `Dual-<version>-<build>-macos-apple-silicon.zip`
+- `Dual-<version>-<build>-macos-apple-silicon.dmg`
+- matching `.sha256` checksum files
+
+### Implementation Notes
+
+- `macos-15-intel` builds the `x86_64` package.
+- `macos-15` builds the `arm64` package.
+- Each architecture exports both `.zip` and `.dmg`.
+- The `.dmg` uses `background.png` from the repository root as its background image.
+- Pushing a `v*` tag uploads the build outputs to GitHub Releases automatically.
+- A manual workflow run only publishes to GitHub Releases when `release_tag` is provided.
+
+## Local Release Packaging
+
+You can reuse the same packaging script locally:
 
 ```bash
 ARCH=x86_64 ARTIFACT_LABEL=intel ./scripts/build-release.sh
 ARCH=arm64 ARTIFACT_LABEL=apple-silicon ./scripts/build-release.sh
 ```
 
-## Local Testing Scripts
+Build outputs are written under `.build/`.
 
-### 重新签名本地 App
+## Local Testing Utilities
+
+### Re-sign a Local App Bundle
 
 ```bash
 chmod +x /Users/lin/person/Dual/scripts/re-sign-local.sh
 /Users/lin/person/Dual/scripts/re-sign-local.sh
 ```
 
-### 移除 quarantine 属性
+This script performs ad-hoc re-signing and prints `codesign` and `spctl` validation results.
+
+### Remove the Quarantine Attribute
 
 ```bash
 chmod +x /Users/lin/person/Dual/scripts/remove-quarantine.sh
 /Users/lin/person/Dual/scripts/remove-quarantine.sh
 ```
 
-说明：
-- `re-sign-local.sh` 会做 ad-hoc 重签名，并输出 `codesign` / `spctl` 检查结果
-- `remove-quarantine.sh` 只移除下载隔离标记，不替代签名或 notarization
+This only removes the quarantine flag. It does not replace code signing or notarization.
 
-### 步骤
+## Manual App Clone Notes
 
-1. 复制 App：
+If you are cloning an Electron app bundle manually, the usual steps are:
+
+1. Copy the app bundle:
+
    ```bash
    ditto --norsrc --noqtn /Applications/Notion.app /Applications/Notion2.app
    ```
 
-2. 修改主 Info.plist：
-   - CFBundleIdentifier → 新的
-   - CFBundleName → 新的
-   - CFBundleDisplayName → 新的
-   - 移除 ElectronAsarIntegrity
+2. Update the main `Info.plist`:
+   - change `CFBundleIdentifier`
+   - change `CFBundleName`
+   - change `CFBundleDisplayName`
+   - remove `ElectronAsarIntegrity`
 
-3. **重命名所有 Helper**：
-   - 目录名、可执行文件、Info.plist 里的 CFBundleExecutable 和 CFBundleIdentifier
-   - 规则：主名 + Helper 后缀
+3. Rename every helper bundle:
+   - rename the bundle directory
+   - rename the executable
+   - update `CFBundleExecutable` and `CFBundleIdentifier` in each helper `Info.plist`
+   - follow the main app name plus the standard helper suffix
 
-4. 补丁 Electron Framework fuse：
+4. Patch the Electron Framework fuse if required:
    - sentinel: `dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX`
-   - offset: sentinel+32+2+4
-   - 把 '1' 改成 '0'
+   - offset: `sentinel + 32 + 2 + 4`
+   - change `'1'` to `'0'`
 
-5. 清 quarantine：
+5. Clear quarantine:
+
    ```bash
    xattr -cr /Applications/Notion2.app
    ```
 
-6. 重新签名：
+6. Re-sign the copied app:
+
    ```bash
    codesign --force --deep --sign - /Applications/Notion2.app
    ```
 
----
+## Important Notes
 
-### 关键说明
+- If you are not injecting additional frameworks, you usually do not need `--options runtime` or custom entitlements.
+- Helper bundles must be renamed correctly, or Electron may fail to launch and exit with `SIGTRAP`.
+- The fuse patch and `ElectronAsarIntegrity` removal are only needed for some Electron versions.
 
-- 不注入 Framework 时，不需要 --options runtime 或 entitlements
-- Helper 必须重命名，否则 Electron 找不到 Helper 直接 SIGTRAP
-- fuse 补丁和 ElectronAsarIntegrity 只对部分 Electron 版本必要
+## Simpler Alternative
 
----
+If your goal is just to run another instance of the app, a separate user data directory is usually more stable than copying the bundle:
 
-### 推荐更稳用法
+```bash
+open -n /Applications/Notion.app --args --user-data-dir=~/Notion2
+```
 
-1. 不复制 app，直接用 user-data-dir 多开：
-   ```bash
-   open -n /Applications/Notion.app --args --user-data-dir=~/Notion2
-   ```
-2. 或用 Chrome/Edge PWA
+Another option is to use a Chrome or Edge PWA instead of duplicating the macOS app bundle.
