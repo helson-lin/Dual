@@ -24,6 +24,7 @@
 "cloner.log.reSign" = "重新签名";
 "cloner.log.source" = "源：%@";
 "cloner.log.started" = "开始处理";
+"cloner.log.isolationCleanup" = "应用独立化清理";
 "cloner.log.usingAdmin" = "使用管理员权限执行";
 "cloner.log.writeInfoPlist" = "写入 Info.plist";
 "common.cancel" = "取消";

@@ -24,6 +24,7 @@
 "cloner.log.reSign" = "Re-signing app";
 "cloner.log.source" = "Source: %@";
 "cloner.log.started" = "Starting clone";
+"cloner.log.isolationCleanup" = "Applying app isolation cleanup";
 "cloner.log.usingAdmin" = "Running with administrator privileges";
 "cloner.log.writeInfoPlist" = "Writing Info.plist";
 "common.cancel" = "Cancel";

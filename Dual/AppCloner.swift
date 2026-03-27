@@ -27,6 +27,47 @@ enum AppClonerError: Error {
     }
 }
 
+private enum AppCloneProfile: Equatable {
+    case generic
+    case telegram
+    case discord
+
+    var needsIsolationCleanup: Bool {
+        switch self {
+        case .generic:
+            return false
+        case .telegram, .discord:
+            return true
+        }
+    }
+
+    var isolationCleanupNeedles: [String] {
+        switch self {
+        case .generic:
+            return []
+        case .telegram:
+            return [
+                "telegram",
+                "tdesktop",
+                "keepcoder"
+            ]
+        case .discord:
+            return [
+                "discord"
+            ]
+        }
+    }
+
+    var needsTelegramIdentityPatch: Bool {
+        switch self {
+        case .telegram:
+            return true
+        case .generic, .discord:
+            return false
+        }
+    }
+}
+
 enum AppCloner {
     static func clone(
         sourceApp: String,
@@ -42,7 +83,12 @@ enum AppCloner {
         logger(L10n.string("cloner.log.source", localeIdentifier: localeIdentifier, sourceApp))
         logger(L10n.string("cloner.log.destination", localeIdentifier: localeIdentifier, destinationApp))
 
-        if let sourceBundleID = readBundleIdentifier(appPath: sourceApp), sourceBundleID == bundleIdentifier {
+        let sourceBundleID = readBundleIdentifier(appPath: sourceApp)
+        let profile = appProfile(sourceApp: sourceApp, sourceBundleIdentifier: sourceBundleID)
+        let telegramIdentityLabel = profile.needsTelegramIdentityPatch ? telegramIdentityLabel(bundleIdentifier: bundleIdentifier) : nil
+        let discordUserDataPath = profile == .discord ? discordUserDataPath(bundleIdentifier: bundleIdentifier) : nil
+
+        if let sourceBundleID, sourceBundleID == bundleIdentifier {
             throw AppClonerError.commandFailed(
                 command: "BundleID Check",
                 output: L10n.string("cloner.error.bundleIdMatchesSource", localeIdentifier: localeIdentifier, sourceBundleID)
@@ -51,7 +97,23 @@ enum AppCloner {
 
         if clearDataBeforeClone {
             logger(L10n.string("cloner.log.clearingData", localeIdentifier: localeIdentifier))
-            clearCloneData(bundleIdentifier: bundleIdentifier, localeIdentifier: localeIdentifier, logger: logger)
+            clearGenericCloneData(bundleIdentifier: bundleIdentifier, localeIdentifier: localeIdentifier, logger: logger)
+            if profile == .discord {
+                clearDiscordUserData(
+                    bundleIdentifier: bundleIdentifier,
+                    localeIdentifier: localeIdentifier,
+                    logger: logger
+                )
+            }
+        }
+
+        if profile.needsIsolationCleanup {
+            logger(L10n.string("cloner.log.isolationCleanup", localeIdentifier: localeIdentifier))
+            clearAppIsolationData(
+                needles: profile.isolationCleanupNeedles,
+                localeIdentifier: localeIdentifier,
+                logger: logger
+            )
         }
 
         if useAdminPrivileges {
@@ -61,6 +123,8 @@ enum AppCloner {
                 destinationApp: destinationApp,
                 bundleIdentifier: bundleIdentifier,
                 bundleName: bundleName,
+                telegramIdentityLabel: telegramIdentityLabel,
+                discordUserDataPath: discordUserDataPath,
                 logger: logger
             )
             return
@@ -77,12 +141,33 @@ enum AppCloner {
         let infoPlist = "\(destinationApp)/Contents/Info.plist"
         logger(L10n.string("cloner.log.writeInfoPlist", localeIdentifier: localeIdentifier))
         try updatePlist(infoPlistPath: infoPlist, bundleIdentifier: bundleIdentifier, bundleName: bundleName)
+        if let telegramIdentityLabel {
+            try patchTelegramIdentity(
+                appPath: destinationApp,
+                infoPlistPath: infoPlist,
+                bundleName: bundleName,
+                telegramIdentityLabel: telegramIdentityLabel
+            )
+        }
+        if let discordUserDataPath {
+            try patchPlistEnvironmentValue(
+                infoPlistPath: infoPlist,
+                key: "DISCORD_USER_DATA_DIR",
+                value: discordUserDataPath
+            )
+        }
 
         renameElectronHelpers(
             appPath: destinationApp,
             sourceApp: sourceApp,
             newName: bundleName,
             bundleIdentifier: bundleIdentifier,
+            localeIdentifier: localeIdentifier,
+            logger: logger
+        )
+        renameMainExecutable(
+            appPath: destinationApp,
+            newName: bundleName,
             localeIdentifier: localeIdentifier,
             logger: logger
         )
@@ -132,6 +217,41 @@ enum AppCloner {
         }
     }
 
+    private static func appProfile(sourceApp: String, sourceBundleIdentifier: String?) -> AppCloneProfile {
+        let appName = URL(fileURLWithPath: sourceApp)
+            .deletingPathExtension()
+            .lastPathComponent
+            .lowercased()
+        let bundleIdentifier = sourceBundleIdentifier?.lowercased() ?? ""
+        let fingerprint = [appName, bundleIdentifier].joined(separator: " ")
+
+        if fingerprint.contains("telegram") || fingerprint.contains("tdesktop") || fingerprint.contains("keepcoder.telegram") {
+            return .telegram
+        }
+
+        if fingerprint.contains("discord") {
+            return .discord
+        }
+
+        return .generic
+    }
+
+    private static func telegramIdentityLabel(bundleIdentifier: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in bundleIdentifier.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+
+        let hex = String(hash, radix: 16, uppercase: false)
+        let normalized = String(repeating: "0", count: max(0, 13 - hex.count)) + hex
+        return "tg-\(String(normalized.prefix(13)))"
+    }
+
+    private static func discordUserDataPath(bundleIdentifier: String) -> String {
+        NSHomeDirectory() + "/Library/Application Support/\(bundleIdentifier)"
+    }
+
     private static func runAllowFailure(
         _ executable: String,
         _ arguments: [String],
@@ -169,6 +289,89 @@ enum AppCloner {
 
         let output = try PropertyListSerialization.data(fromPropertyList: plist, format: format, options: 0)
         try output.write(to: url, options: .atomic)
+    }
+
+    private static func patchTelegramIdentity(
+        appPath: String,
+        infoPlistPath: String,
+        bundleName: String,
+        telegramIdentityLabel: String
+    ) throws {
+        let url = URL(fileURLWithPath: infoPlistPath)
+        let data = try Data(contentsOf: url)
+        var format = PropertyListSerialization.PropertyListFormat.xml
+
+        guard var plist = try PropertyListSerialization.propertyList(from: data, options: .mutableContainersAndLeaves, format: &format) as? [String: Any] else {
+            throw AppClonerError.invalidInfoPlist(path: infoPlistPath)
+        }
+
+        plist["CFBundleGetInfoString"] = "\(bundleName) messaging app"
+        let output = try PropertyListSerialization.data(fromPropertyList: plist, format: format, options: 0)
+        try output.write(to: url, options: .atomic)
+
+        let binaryPath = appPath + "/Contents/MacOS/Telegram"
+        try patchBinaryString(
+            filePath: binaryPath,
+            from: "Telegram Desktop",
+            to: telegramIdentityLabel
+        )
+    }
+
+    private static func patchPlistEnvironmentValue(
+        infoPlistPath: String,
+        key: String,
+        value: String
+    ) throws {
+        let url = URL(fileURLWithPath: infoPlistPath)
+        let data = try Data(contentsOf: url)
+        var format = PropertyListSerialization.PropertyListFormat.xml
+
+        guard var plist = try PropertyListSerialization.propertyList(from: data, options: .mutableContainersAndLeaves, format: &format) as? [String: Any] else {
+            throw AppClonerError.invalidInfoPlist(path: infoPlistPath)
+        }
+
+        var environment = plist["LSEnvironment"] as? [String: Any] ?? [:]
+        environment[key] = value
+        plist["LSEnvironment"] = environment
+
+        let output = try PropertyListSerialization.data(fromPropertyList: plist, format: format, options: 0)
+        try output.write(to: url, options: .atomic)
+    }
+
+    private static func patchBinaryString(
+        filePath: String,
+        from: String,
+        to: String
+    ) throws {
+        let url = URL(fileURLWithPath: filePath)
+        var data = try Data(contentsOf: url)
+        let fromData = Data(from.utf8)
+        let toData = Data(to.utf8)
+
+        guard fromData.count == toData.count else {
+            throw AppClonerError.commandFailed(
+                command: "Binary String Patch",
+                output: "Replacement length mismatch"
+            )
+        }
+
+        var didReplace = false
+        var searchStart = data.startIndex
+        while searchStart < data.endIndex,
+              let range = data.range(of: fromData, in: searchStart..<data.endIndex) {
+            data.replaceSubrange(range, with: toData)
+            didReplace = true
+            searchStart = range.lowerBound + toData.count
+        }
+
+        guard didReplace else {
+            throw AppClonerError.commandFailed(
+                command: "Binary String Patch",
+                output: "Telegram Desktop marker not found"
+            )
+        }
+
+        try data.write(to: url, options: .atomic)
     }
 
     /// Disable Electron's embedded ASAR integrity validation fuse.
@@ -226,6 +429,46 @@ enum AppCloner {
                 }
                 return
             }
+        }
+    }
+
+    /// Rename the main executable to match the new bundle name.
+    /// This changes the visible process name, which prevents process-name-based
+    /// single-instance detection (e.g. Discord checks for a running "Discord" process).
+    private static func renameMainExecutable(
+        appPath: String,
+        newName: String,
+        localeIdentifier: String?,
+        logger: (String) -> Void
+    ) {
+        let infoPlist = appPath + "/Contents/Info.plist"
+        guard
+            let data = try? Data(contentsOf: URL(fileURLWithPath: infoPlist)),
+            var fmt = Optional(PropertyListSerialization.PropertyListFormat.xml),
+            var plist = try? PropertyListSerialization.propertyList(from: data, options: .mutableContainersAndLeaves, format: &fmt) as? [String: Any],
+            let originalExec = plist["CFBundleExecutable"] as? String,
+            originalExec != newName
+        else { return }
+
+        let macosDir = appPath + "/Contents/MacOS"
+        let oldPath = macosDir + "/" + originalExec
+        let newPath = macosDir + "/" + newName
+
+        guard FileManager.default.fileExists(atPath: oldPath) else { return }
+
+        do {
+            try FileManager.default.moveItem(atPath: oldPath, toPath: newPath)
+            plist["CFBundleExecutable"] = newName
+            if let output = try? PropertyListSerialization.data(fromPropertyList: plist, format: fmt, options: 0) {
+                try? output.write(to: URL(fileURLWithPath: infoPlist))
+            }
+            logger(L10n.string("cloner.log.helperRenamed", localeIdentifier: localeIdentifier, originalExec, newName))
+        } catch {
+            logger(L10n.string(
+                "cloner.log.renameHelperFailed",
+                localeIdentifier: localeIdentifier,
+                localizedErrorDescription(error, localeIdentifier: localeIdentifier)
+            ))
         }
     }
 
@@ -302,7 +545,7 @@ enum AppCloner {
         return plist["CFBundleIdentifier"] as? String
     }
 
-    private static func clearCloneData(
+    private static func clearGenericCloneData(
         bundleIdentifier: String,
         localeIdentifier: String?,
         logger: (String) -> Void
@@ -334,17 +577,112 @@ enum AppCloner {
         }
     }
 
+    private static func clearDiscordUserData(
+        bundleIdentifier: String,
+        localeIdentifier: String?,
+        logger: (String) -> Void
+    ) {
+        let path = discordUserDataPath(bundleIdentifier: bundleIdentifier)
+        guard FileManager.default.fileExists(atPath: path) else { return }
+
+        do {
+            try FileManager.default.removeItem(atPath: path)
+            logger(L10n.string("cloner.log.cleanedPath", localeIdentifier: localeIdentifier, path))
+        } catch {
+            logger(L10n.string(
+                "cloner.log.cleanupFailed",
+                localeIdentifier: localeIdentifier,
+                path,
+                localizedErrorDescription(error, localeIdentifier: localeIdentifier)
+            ))
+        }
+    }
+
+    private static func clearAppIsolationData(
+        needles: [String],
+        localeIdentifier: String?,
+        logger: (String) -> Void
+    ) {
+        let home = NSHomeDirectory()
+        let fm = FileManager.default
+
+        let directoryRoots = [
+            "\(home)/Library/Application Support",
+            "\(home)/Library/Group Containers",
+            "\(home)/Library/Containers",
+            "\(home)/Library/Application Scripts",
+            "\(home)/Library/Caches",
+            "\(home)/Library/Saved Application State",
+            "\(home)/Library/WebKit",
+            "\(home)/Library/HTTPStorages"
+        ]
+
+        for root in directoryRoots {
+            guard let items = try? fm.contentsOfDirectory(atPath: root) else { continue }
+            for item in items where matchesAnyNeedle(item, needles: needles) {
+                let path = root + "/" + item
+                do {
+                    try fm.removeItem(atPath: path)
+                    logger(L10n.string("cloner.log.cleanedPath", localeIdentifier: localeIdentifier, path))
+                } catch {
+                    logger(L10n.string(
+                        "cloner.log.cleanupFailed",
+                        localeIdentifier: localeIdentifier,
+                        path,
+                        localizedErrorDescription(error, localeIdentifier: localeIdentifier)
+                    ))
+                }
+            }
+        }
+
+        let preferenceRoot = "\(home)/Library/Preferences"
+        if let items = try? fm.contentsOfDirectory(atPath: preferenceRoot) {
+            for item in items where matchesAnyNeedle(item, needles: needles) {
+                let path = preferenceRoot + "/" + item
+                do {
+                    try fm.removeItem(atPath: path)
+                    logger(L10n.string("cloner.log.cleanedPath", localeIdentifier: localeIdentifier, path))
+                } catch {
+                    logger(L10n.string(
+                        "cloner.log.cleanupFailed",
+                        localeIdentifier: localeIdentifier,
+                        path,
+                        localizedErrorDescription(error, localeIdentifier: localeIdentifier)
+                    ))
+                }
+            }
+        }
+    }
+
+    private static func matchesAnyNeedle(_ value: String, needles: [String]) -> Bool {
+        let lowercased = value.lowercased()
+        return needles.contains { lowercased.contains($0) }
+    }
+
     private static func cloneWithAdminPrivileges(
         sourceApp: String,
         destinationApp: String,
         bundleIdentifier: String,
         bundleName: String,
+        telegramIdentityLabel: String?,
+        discordUserDataPath: String?,
         logger: (String) -> Void
     ) throws {
         let tempDir = FileManager.default.temporaryDirectory
         let scriptURL = tempDir.appendingPathComponent("dual-clone-\(UUID().uuidString).sh")
         let scriptPath = scriptURL.path
         let infoPlist = destinationApp + "/Contents/Info.plist"
+        let telegramPatchScript = telegramIdentityLabel.map { label in
+            """
+            /usr/bin/plutil -replace CFBundleGetInfoString -string \(shellEscape(bundleName + " messaging app")) \(shellEscape(infoPlist))
+            /usr/bin/perl -0pi -e 's/Telegram Desktop/\(label)/g' \(shellEscape(destinationApp + "/Contents/MacOS/Telegram"))
+            """
+        } ?? ""
+        let discordEnvironmentPatchScript = discordUserDataPath.map { path in
+            """
+            /usr/bin/python3 -c 'import plistlib,sys; p,k,v=sys.argv[1:4]; d=plistlib.load(open(p,"rb")); e=d.get("LSEnvironment") or {}; e[k]=v; d["LSEnvironment"]=e; h=open(p,"wb"); plistlib.dump(d,h); h.close()' \(shellEscape(infoPlist)) DISCORD_USER_DATA_DIR \(shellEscape(path))
+            """
+        } ?? ""
         let script = """
         #!/bin/bash
         set -euo pipefail
@@ -356,6 +694,8 @@ enum AppCloner {
         /usr/bin/plutil -replace CFBundleName -string \(shellEscape(bundleName)) \(shellEscape(infoPlist))
         /usr/bin/plutil -replace CFBundleDisplayName -string \(shellEscape(bundleName)) \(shellEscape(infoPlist))
         /usr/bin/plutil -remove ElectronAsarIntegrity \(shellEscape(infoPlist)) 2>/dev/null || true
+        \(telegramPatchScript)
+        \(discordEnvironmentPatchScript)
         ORIG_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleName" \(shellEscape(sourceApp + "/Contents/Info.plist")) 2>/dev/null || echo "")
         if [ -n "$ORIG_NAME" ] && [ "$ORIG_NAME" != \(shellEscape(bundleName)) ]; then
           FW_DIR=\(shellEscape(destinationApp))/Contents/Frameworks
@@ -371,6 +711,14 @@ enum AppCloner {
               [ -f "$FW_DIR/$NEW_BASE/Contents/MacOS/$OLD_EXEC" ] && mv "$FW_DIR/$NEW_BASE/Contents/MacOS/$OLD_EXEC" "$FW_DIR/$NEW_BASE/Contents/MacOS/$NEW_EXEC"
               /usr/bin/plutil -replace CFBundleExecutable -string "$NEW_EXEC" "$FW_DIR/$NEW_BASE/Contents/Info.plist" 2>/dev/null || true
             done
+          fi
+        fi
+        EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \(shellEscape(infoPlist)) 2>/dev/null || echo "")
+        if [ -n "$EXEC_NAME" ] && [ "$EXEC_NAME" != \(shellEscape(bundleName)) ]; then
+          MACOS_DIR=\(shellEscape(destinationApp))/Contents/MacOS
+          if [ -f "$MACOS_DIR/$EXEC_NAME" ]; then
+            mv "$MACOS_DIR/$EXEC_NAME" \(shellEscape(destinationApp + "/Contents/MacOS/" + bundleName))
+            /usr/bin/plutil -replace CFBundleExecutable -string \(shellEscape(bundleName)) \(shellEscape(infoPlist)) 2>/dev/null || true
           fi
         fi
         /usr/bin/perl -e '
