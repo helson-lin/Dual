@@ -4,6 +4,17 @@
 
 Dual is a macOS app for cloning application bundles into a separate copy with a new name, bundle identifier, and app identity. It is designed for users who need a second copy of an app for testing, isolated sessions, or multi-account workflows.
 
+![](./assets/demo.jpg)
+
+| App             | Logo                                                                        | Work |
+| --------------- | --------------------------------------------------------------------------- | ---- |
+| Wechat          | ![wechat](https://r2.oimi.space/9z4deF/wechat-32x32.webp)                   | ✅   |
+| QQ              | ![qq](https://r2.oimi.space/9z4deF/qq-32x32.webp)                           | ✅   |
+| WechatBussiness | ![WechatBussiness](https://r2.oimi.space/9z4deF/wechatBussiness-32x32.webp) | ✅   |
+| Ghostty         | ![Ghostty](https://r2.oimi.space/9z4deF/ghostty-32x32.webp)                 | ✅   |
+| Kaku            | ![Kaku](https://r2.oimi.space/9z4deF/kaku-32x32.webp)                       | ✅   |
+| IINA            | ![IINA](https://r2.oimi.space/9z4deF/iina-32x32.webp)                       | ✅   |
+
 ## What It Does
 
 - Clones a selected `.app` bundle into a new destination.
