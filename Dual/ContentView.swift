@@ -225,19 +225,19 @@ struct ContentView: View {
                 topToolbar
 
                 GeometryReader { _ in
-                    HStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 0) {
                         dropArea
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                         rightPanel
-                            .frame(width: 320)
-                            .frame(maxHeight: .infinity)
+                            .frame(width: 360)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
 
         }
-        .frame(minWidth: 660, minHeight: 560)
+        .frame(minWidth: 740, minHeight: 480)
         .background(WindowConfigurator())
         .alert(localized("admin.alert.title"), isPresented: $showAdminPrivilegeAlert) {
             Button(localized("common.cancel"), role: .cancel) {
@@ -271,14 +271,14 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
                         sectionCard {
                             sectionLabel(localized("section.source"))
                             secondaryButton(localized("action.chooseSourceApp")) { pickSourceApp() }
                                 .disabled(isProcessing)
                                 .focusable(false)
                         }
-                        .padding(.top, 12)
+                        .padding(.top, 8)
 
                         sectionCard {
                             sectionLabel(localized("section.cloneSettings"))
@@ -295,15 +295,15 @@ struct ContentView: View {
                         }
 
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 20)
                     .padding(.top, 0)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
                 .fixedSize(horizontal: false, vertical: true)
                 .clipped()
 
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     if !errorText.isEmpty {
                         bottomActionSurface(
                             fill: Color(red: 1.0, green: 0.96, blue: 0.95).opacity(0.95),
@@ -316,7 +316,7 @@ struct ContentView: View {
                                     .padding(.top, 1)
 
                                 Text(errorText)
-                                    .font(.system(size: 11.5, weight: .medium))
+                                    .font(.system(size: 10.5, weight: .medium))
                                     .foregroundStyle(Color(red: 0.74, green: 0.28, blue: 0.2))
                                     .fixedSize(horizontal: false, vertical: true)
 
@@ -333,7 +333,7 @@ struct ContentView: View {
                                 .padding(.top, 1)
 
                             Text(localized("disclaimer.risk"))
-                                .font(.system(size: 11.5, weight: .medium))
+                                .font(.system(size: 10.5, weight: .medium))
                                 .foregroundStyle(Color.primary.opacity(0.62))
                                 .fixedSize(horizontal: false, vertical: true)
 
@@ -387,7 +387,7 @@ struct ContentView: View {
                     }
                     .disabled(isProcessing)
                     .keyboardShortcut(.defaultAction)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(isProcessing ? Color(red: 0.58, green: 0.6, blue: 0.64) : .white)
                     .shadow(
                         color: isProcessing
@@ -426,9 +426,9 @@ struct ContentView: View {
                     .animation(.easeInOut(duration: 0.3), value: cloneSuccess)
                     .animation(.easeInOut(duration: 0.2), value: isProcessing)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 8)
-                .padding(.bottom, 22)
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
+                .padding(.bottom, 14)
                 .background(
                     LinearGradient(
                         colors: bottomGradientColors,
@@ -436,20 +436,13 @@ struct ContentView: View {
                         endPoint: .bottom
                     )
                 )
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(bottomDividerColor)
-                        .frame(height: 1)
-                }
-
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.top, 0)
         .padding(.trailing, 12)
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
     }
 
     private func sectionCard<Content: View>(spacing: CGFloat = 10, @ViewBuilder content: () -> Content) -> some View {
@@ -494,7 +487,7 @@ struct ContentView: View {
     private func secondaryButton(_ label: String, action: @escaping () -> Void) -> some View {
         Button(label, action: action)
             .buttonStyle(.plain)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(secondaryButtonText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
@@ -506,14 +499,18 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(inputStroke, lineWidth: 1)
             )
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .allowsTightening(true)
     }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
             .tracking(0.5)
+            .lineLimit(1)
     }
 
     private var dropArea: some View {
@@ -521,7 +518,7 @@ struct ContentView: View {
             if showingLog {
                 logPanel
             } else {
-                VStack(spacing: 18) {
+                VStack(spacing: 14) {
                     ZStack {
                         if let appIcon {
                             Image(nsImage: appIcon)
@@ -542,19 +539,21 @@ struct ContentView: View {
 
                     VStack(spacing: 6) {
                         Text(sourceAppPath.isEmpty ? localized("drop.title.empty") : localized("status.sourceAppSelected"))
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(.system(size: 19, weight: .semibold, design: .rounded))
                             .foregroundStyle(Color.primary.opacity(0.88))
                         Text(sourceAppPath.isEmpty ? localized("drop.subtitle.empty") : localized("drop.subtitle.selected"))
-                            .font(.system(size: 13, weight: .regular))
+                            .font(.system(size: 11.5, weight: .regular))
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.9)
 
                         if sourceAppPath.isEmpty {
                             if !suggestedApps.isEmpty {
                                 VStack(spacing: 8) {
                                     Text(localized("drop.quickPick"))
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(.tertiary)
-                                        .padding(.top, 12)
+                                        .padding(.top, 8)
 
                                     HStack(spacing: 12) {
                                         ForEach(suggestedApps) { app in
@@ -568,7 +567,7 @@ struct ContentView: View {
                                                         .scaledToFit()
                                                         .frame(width: 38, height: 38)
                                                     Text(app.name)
-                                                        .font(.system(size: 11))
+                                                        .font(.system(size: 10.5))
                                                         .foregroundStyle(.secondary)
                                                         .lineLimit(1)
                                                         .frame(width: 60)
@@ -583,13 +582,13 @@ struct ContentView: View {
                                 }
                             } else {
                                 Text(localized("drop.supportsAnyApp"))
-                                    .font(.system(size: 14, weight: .regular))
+                                    .font(.system(size: 12.5, weight: .regular))
                                     .foregroundStyle(Color.secondary.opacity(0.9))
                                     .padding(.top, 8)
                             }
                         } else {
                             Text(sourceAppPath)
-                                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                                .font(.system(size: 13, weight: .regular, design: .monospaced))
                                 .foregroundStyle(Color.secondary.opacity(0.92))
                                 .lineLimit(2)
                                 .multilineTextAlignment(.center)
@@ -631,9 +630,9 @@ struct ContentView: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(cloneName.isEmpty ? localized("log.title") : cloneName)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 13.5, weight: .semibold))
                     Text(localized("log.subtitle"))
-                        .font(.system(size: 11))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -653,9 +652,9 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
 
             // Indeterminate progress bar
             if isProcessing {
@@ -678,8 +677,8 @@ struct ContentView: View {
                 }
                 .frame(height: 2)
                 .clipShape(RoundedRectangle(cornerRadius: 1))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 6)
                 .onAppear {
                     progressPhase = 0
                     withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
@@ -697,12 +696,12 @@ struct ContentView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(logText.isEmpty ? localized("log.waiting") : logText)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .foregroundStyle(Color.primary.opacity(0.65))
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 14)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
                         .id("logEnd")
                 }
                 .onChange(of: logText) {
@@ -718,36 +717,36 @@ struct ContentView: View {
                         .controlSize(.small)
                         .scaleEffect(0.7)
                     Text(localized("log.status.processing"))
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 } else if cloneSuccess {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color(red: 0.18, green: 0.72, blue: 0.42))
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                     Text(localized("log.status.success"))
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color(red: 0.18, green: 0.72, blue: 0.42))
                     if !lastOutputPath.isEmpty {
                         Spacer()
                         Button(localized("action.revealInFinder")) {
                             revealInFinder(path: lastOutputPath)
                         }
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .buttonStyle(.link)
                     }
                 } else if !errorText.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                     Text(errorText)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.orange)
                         .lineLimit(2)
                 }
                 Spacer()
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -755,10 +754,11 @@ struct ContentView: View {
     private func labeledField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.primary.opacity(0.5))
+                .lineLimit(1)
             FocuslessTextField(text: text)
-                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .font(.system(size: 12.5, weight: .regular, design: .monospaced))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .frame(height: 32)
@@ -774,13 +774,13 @@ struct ContentView: View {
     private func readOnlyField(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.primary.opacity(0.82))
             Text(value)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .font(.system(size: 14.5, weight: .regular, design: .monospaced))
+                .font(.system(size: 13.5, weight: .regular, design: .monospaced))
                 .background(inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
@@ -794,10 +794,12 @@ struct ContentView: View {
     private func settingToggleRow(_ label: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 10) {
             Text(label)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(Color.primary.opacity(0.84))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
             Spacer()
             Toggle("", isOn: isOn)
                 .labelsHidden()
