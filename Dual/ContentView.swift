@@ -493,23 +493,27 @@ struct ContentView: View {
     }
 
     private func secondaryButton(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(label, action: action)
-            .buttonStyle(.plain)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(secondaryButtonText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(inputBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(inputStroke, lineWidth: 1)
-            )
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .allowsTightening(true)
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(secondaryButtonText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .allowsTightening(true)
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(inputBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(inputStroke, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func sectionLabel(_ text: String) -> some View {
