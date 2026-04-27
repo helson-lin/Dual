@@ -167,33 +167,42 @@ struct ContentView: View {
     private var isDark: Bool { colorScheme == .dark }
 
     private var panelBackground: Color {
-        isDark ? Color(white: 0.13).opacity(0.88) : Color.white.opacity(0.7)
+        isDark ? Color(red: 0.24, green: 0.245, blue: 0.25).opacity(0.74) : Color.white.opacity(0.7)
     }
     private var panelStroke: Color {
-        isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05)
+        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.05)
     }
     private var cardBackground: Color {
-        isDark ? Color(white: 0.22).opacity(0.7) : Color.white.opacity(0.5)
+        isDark ? Color.white.opacity(0.075) : Color.white.opacity(0.5)
     }
     private var cardStroke: Color {
-        isDark ? Color.white.opacity(0.08) : Color.white.opacity(0.42)
+        isDark ? Color.white.opacity(0.13) : Color.white.opacity(0.42)
     }
     private var inputBackground: Color {
-        isDark ? Color(white: 0.18) : Color(red: 0.96, green: 0.965, blue: 0.975)
+        isDark ? Color.white.opacity(0.08) : Color(red: 0.96, green: 0.965, blue: 0.975)
     }
     private var inputStroke: Color {
-        isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
+        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.06)
     }
     private var secondaryButtonText: Color {
-        isDark ? Color(white: 0.82) : Color(red: 0.2, green: 0.23, blue: 0.28)
+        isDark ? Color(white: 0.88) : Color(red: 0.2, green: 0.23, blue: 0.28)
     }
     private var bottomGradientColors: [Color] {
         isDark
-            ? [Color.black.opacity(0.0), Color.black.opacity(0.06), Color.black.opacity(0.12)]
+            ? [Color.white.opacity(0.0), Color.white.opacity(0.025), Color.white.opacity(0.04)]
             : [Color.white.opacity(0.0), Color.white.opacity(0.1), Color.white.opacity(0.18)]
     }
     private var bottomDividerColor: Color {
         isDark ? Color.white.opacity(0.08) : Color.white.opacity(0.22)
+    }
+    private var riskSurfaceFill: Color {
+        isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.56)
+    }
+    private var riskSurfaceStroke: Color {
+        isDark ? Color.white.opacity(0.12) : Color.white.opacity(0)
+    }
+    private var riskTextColor: Color {
+        isDark ? Color.white.opacity(0.72) : Color.primary.opacity(0.62)
     }
 
     private var primaryActionTitle: String {
@@ -231,13 +240,12 @@ struct ContentView: View {
 
                         rightPanel
                             .frame(width: 360)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
 
         }
-        .frame(minWidth: 740, minHeight: 480)
+        .frame(minWidth: 740, minHeight: 520)
         .background(WindowConfigurator())
         .alert(localized("admin.alert.title"), isPresented: $showAdminPrivilegeAlert) {
             Button(localized("common.cancel"), role: .cancel) {
@@ -299,8 +307,8 @@ struct ContentView: View {
                     .padding(.top, 0)
                     .padding(.bottom, 4)
                 }
-                .frame(maxWidth: .infinity, alignment: .top)
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .layoutPriority(1)
                 .clipped()
 
                 VStack(spacing: 8) {
@@ -325,7 +333,7 @@ struct ContentView: View {
                         }
                     }
 
-                    bottomActionSurface(fill: Color.white.opacity(0.56), stroke: Color.white.opacity(0)) {
+                    bottomActionSurface(fill: riskSurfaceFill, stroke: riskSurfaceStroke) {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "exclamationmark.shield")
                                 .font(.system(size: 12, weight: .semibold))
@@ -334,7 +342,7 @@ struct ContentView: View {
 
                             Text(localized("disclaimer.risk"))
                                 .font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(Color.primary.opacity(0.62))
+                                .foregroundStyle(riskTextColor)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             Spacer(minLength: 0)
@@ -437,7 +445,7 @@ struct ContentView: View {
                     )
                 )
             }
-            .frame(maxWidth: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.top, 0)
@@ -638,16 +646,33 @@ struct ContentView: View {
                 Spacer()
                 if !isProcessing {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showingLog = false
-                            errorText = ""
-                        }
+                        returnToHome()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(Circle().fill(Color.primary.opacity(0.06)))
+                        if cloneSuccess {
+                            HStack(spacing: 6) {
+                                Image(systemName: "house.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(localized("action.backHome"))
+                                    .font(.system(size: 11.5, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.white.opacity(0.96))
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.92))
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            )
+                        } else {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 22, height: 22)
+                                .background(Circle().fill(Color.primary.opacity(0.06)))
+                        }
                     }
                     .buttonStyle(.plain)
                 }
@@ -883,6 +908,14 @@ struct ContentView: View {
         iconScale = 0.5
         withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
             iconScale = 1.0
+        }
+    }
+
+    private func returnToHome() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showingLog = false
+            errorText = ""
+            cloneSuccess = false
         }
     }
 

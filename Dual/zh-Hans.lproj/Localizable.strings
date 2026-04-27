@@ -1,5 +1,6 @@
 "admin.alert.message" = "目标目录在 /Applications 下且当前无写权限。点击“继续并提权”后，会弹出系统管理员密码窗口。";
 "admin.alert.title" = "需要管理员权限";
+"action.backHome" = "回到主页";
 "action.chooseDestinationDirectory" = "选择目标目录";
 "action.chooseSourceApp" = "选择源 App";
 "action.revealInFinder" = "在 Finder 中显示";

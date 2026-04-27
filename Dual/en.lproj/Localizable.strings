@@ -1,5 +1,6 @@
 "admin.alert.message" = "The destination is under /Applications and is not currently writable. After you click \"Continue with Admin Access\", macOS will ask for an administrator password.";
 "admin.alert.title" = "Administrator Access Required";
+"action.backHome" = "Back Home";
 "action.chooseDestinationDirectory" = "Choose Folder";
 "action.chooseSourceApp" = "Choose Source App";
 "action.revealInFinder" = "Show in Finder";
