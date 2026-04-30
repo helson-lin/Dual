@@ -588,7 +588,6 @@ struct ContentView: View {
                                             }
                                             .buttonStyle(.plain)
                                             .focusable(false)
-                                            .focusEffectDisabled()
                                         }
                                     }
                                 }
@@ -733,7 +732,7 @@ struct ContentView: View {
                         .padding(.vertical, 10)
                         .id("logEnd")
                 }
-                .onChange(of: logText) {
+                .onChange(of: logText) { _ in
                     proxy.scrollTo("logEnd", anchor: .bottom)
                 }
             }
