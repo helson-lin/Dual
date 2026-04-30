@@ -6,6 +6,7 @@ SCHEME="${SCHEME:-Dual}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 ARCH="${ARCH:?ARCH is required, e.g. x86_64 or arm64}"
 ARTIFACT_LABEL="${ARTIFACT_LABEL:-$ARCH}"
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-15.0}"
 BUILD_ROOT="${BUILD_ROOT:-$PWD/.build}"
 BACKGROUND_SOURCE="${BACKGROUND_SOURCE:-$PWD/background.png}"
 DMG_WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-660}"
@@ -34,6 +35,7 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \
   ARCHS="$ARCH" \
+  MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
   ONLY_ACTIVE_ARCH=NO \
   clean archive
 
@@ -45,10 +47,26 @@ fi
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
 BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Contents/Info.plist")
+MINIMUM_SYSTEM_VERSION=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist")
+EXECUTABLE_PATH="$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
 ZIP_NAME="${SCHEME}-${VERSION}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.zip"
 ZIP_PATH="$EXPORT_DIR/$ZIP_NAME"
 DMG_NAME="${SCHEME}-${VERSION}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.dmg"
 DMG_PATH="$EXPORT_DIR/$DMG_NAME"
+
+if [[ "$MINIMUM_SYSTEM_VERSION" != "$DEPLOYMENT_TARGET" ]]; then
+  echo "error: expected LSMinimumSystemVersion $DEPLOYMENT_TARGET, got ${MINIMUM_SYSTEM_VERSION:-<missing>}"
+  exit 1
+fi
+
+if ! /usr/bin/lipo -archs "$EXECUTABLE_PATH" | tr ' ' '\n' | grep -qx "$ARCH"; then
+  echo "error: built executable does not contain expected architecture $ARCH"
+  /usr/bin/lipo -archs "$EXECUTABLE_PATH"
+  exit 1
+fi
+
+echo "==> Verified minimum macOS $MINIMUM_SYSTEM_VERSION and architecture $ARCH"
 
 echo "==> Packaging $ZIP_NAME"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
