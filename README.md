@@ -45,6 +45,33 @@ The app uses SwiftUI for the interface and an `AppCloner` pipeline behind the sc
 
 The repository includes a GitHub Actions workflow that builds macOS `zip` and `dmg` artifacts for Intel and Apple Silicon, and can publish them to GitHub Releases on tagged or manually triggered runs.
 
+## Installing Test Releases
+
+Current GitHub Releases are unsigned and not notarized. That means macOS Gatekeeper may show messages such as `"Dual" is damaged and can’t be opened` or block the app on first launch. This is expected for the current test distribution flow.
+
+Recommended install flow for testers:
+
+1. Move `Dual.app` into `/Applications`.
+2. Remove the quarantine attribute:
+
+```bash
+./scripts/remove-quarantine.sh /Applications/Dual.app
+```
+
+3. If macOS still blocks launch, apply a local ad-hoc signature:
+
+```bash
+./scripts/re-sign-local.sh /Applications/Dual.app
+```
+
+4. Launch the app with Finder -> right click -> `Open` on the first run if needed.
+
+Important constraints:
+
+- This is a temporary workaround for test builds only.
+- Public distribution without Apple Developer signing and notarization will remain unreliable across macOS versions.
+- The helper scripts accept a custom app path if the app is not installed in `/Applications`.
+
 ## Project Structure
 
 - `Dual/` - the macOS app source

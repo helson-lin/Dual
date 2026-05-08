@@ -10,10 +10,12 @@ DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-13.0}"
 BUILD_ROOT="${BUILD_ROOT:-$PWD/.build}"
 BACKGROUND_SOURCE="${BACKGROUND_SOURCE:-$PWD/background.png}"
 DMG_WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-660}"
-DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-400}"
+DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-450}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 VERSION_OVERRIDE="${VERSION_OVERRIDE:-}"
 BUILD_NUMBER_OVERRIDE="${BUILD_NUMBER_OVERRIDE:-}"
+DMGBUILD_PYTHONPATH="${DMGBUILD_PYTHONPATH:-}"
+FORCE_DMGBUILD="${FORCE_DMGBUILD:-}"
 
 if [[ -z "$RELEASE_TAG" && "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
   RELEASE_TAG="$GITHUB_REF_NAME"
@@ -50,6 +52,8 @@ EXPORT_DIR="$BUILD_ROOT/export/${ARTIFACT_LABEL}"
 DMG_STAGING_DIR="$BUILD_ROOT/dmg/${ARTIFACT_LABEL}"
 DMG_TEMP_DIR="$BUILD_ROOT/dmg-temp/${ARTIFACT_LABEL}"
 DMG_RW_PATH="$DMG_TEMP_DIR/${SCHEME}-${ARTIFACT_LABEL}-rw.dmg"
+DMG_STAGING_BACKGROUND="$DMG_STAGING_DIR/.background/background.png"
+DMGBUILD_BACKGROUND="$DMG_TEMP_DIR/dmgbuild-background.tiff"
 
 rm -rf "$ARCHIVE_PATH" "$DERIVED_DATA_PATH" "$EXPORT_DIR" "$DMG_STAGING_DIR" "$DMG_TEMP_DIR"
 mkdir -p "$EXPORT_DIR"
@@ -128,7 +132,8 @@ if [[ ! -f "$BACKGROUND_SOURCE" ]]; then
   exit 1
 fi
 
-sips -z "$DMG_WINDOW_HEIGHT" "$DMG_WINDOW_WIDTH" "$BACKGROUND_SOURCE" --out "$DMG_STAGING_DIR/.background/background.png" >/dev/null
+sips -s format png -z "$DMG_WINDOW_HEIGHT" "$DMG_WINDOW_WIDTH" "$BACKGROUND_SOURCE" --out "$DMG_STAGING_BACKGROUND" >/dev/null
+sips -s format tiff -z "$DMG_WINDOW_HEIGHT" "$DMG_WINDOW_WIDTH" "$BACKGROUND_SOURCE" --out "$DMGBUILD_BACKGROUND" >/dev/null
 
 create_plain_dmg() {
   echo "note: using plain DMG packaging"
@@ -138,6 +143,54 @@ create_plain_dmg() {
     -ov \
     -format UDZO \
     "$DMG_PATH" >/dev/null
+}
+
+has_dmgbuild() {
+  if [[ -n "$DMGBUILD_PYTHONPATH" ]]; then
+    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 -c "import dmgbuild" >/dev/null 2>&1
+  else
+    python3 -c "import dmgbuild" >/dev/null 2>&1
+  fi
+}
+
+create_dmg_with_dmgbuild() {
+  local settings_path="$DMG_TEMP_DIR/dmgbuild-settings.json"
+
+  cat >"$settings_path" <<EOF
+{
+  "title": "$SCHEME",
+  "background": "$DMGBUILD_BACKGROUND",
+  "icon-size": 80,
+  "window": {
+    "position": { "x": 100, "y": 100 },
+    "size": { "width": $DMG_WINDOW_WIDTH, "height": $DMG_WINDOW_HEIGHT }
+  },
+  "format": "UDZO",
+  "filesystem": "HFS+",
+  "contents": [
+    {
+      "path": "$APP_PATH",
+      "name": "$SCHEME.app",
+      "type": "file",
+      "x": 190,
+      "y": 180
+    },
+    {
+      "path": "/Applications",
+      "name": "Applications",
+      "type": "link",
+      "x": 495,
+      "y": 180
+    }
+  ]
+}
+EOF
+
+  if [[ -n "$DMGBUILD_PYTHONPATH" ]]; then
+    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 -m dmgbuild "$SCHEME" "$DMG_PATH" -s "$settings_path" --no-hidpi
+  else
+    python3 -m dmgbuild "$SCHEME" "$DMG_PATH" -s "$settings_path" --no-hidpi
+  fi
 }
 
 create_styled_dmg() {
@@ -156,6 +209,7 @@ create_styled_dmg() {
   DEVICE=$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/Apple_HFS/ {print $1; exit}')
   WINDOW_RIGHT=$((100 + DMG_WINDOW_WIDTH))
   WINDOW_BOTTOM=$((100 + DMG_WINDOW_HEIGHT))
+  DS_STORE_PATH="$MOUNT_DIR/.DS_Store"
 
   cleanup_dmg() {
     if [[ -n "${DEVICE:-}" ]]; then
@@ -168,38 +222,66 @@ create_styled_dmg() {
   /usr/bin/SetFile -a V "$MOUNT_DIR/.background"
 
   osascript <<EOF
+set dmgFolder to POSIX file "$MOUNT_DIR" as alias
 set bgAlias to POSIX file "$MOUNT_DIR/.background/background.png" as alias
 tell application "Finder"
-  tell disk "$SCHEME"
-    open
-    set current view of container window to icon view
-    set toolbar visible of container window to false
-    set statusbar visible of container window to false
-    set the bounds of container window to {100, 100, $WINDOW_RIGHT, $WINDOW_BOTTOM}
-    set theViewOptions to the icon view options of container window
-    set arrangement of theViewOptions to not arranged
-    set icon size of theViewOptions to 80
-    set text size of theViewOptions to 14
-    set background picture of theViewOptions to bgAlias
-    set position of item "$SCHEME.app" of container window to {190, 180}
-    set position of item "Applications" of container window to {495, 180}
-    close
-    open
-    update without registering applications
-    delay 2
-  end tell
+  activate
+  open dmgFolder
+  delay 1
+  set dmgWindow to front window
+  set current view of dmgWindow to icon view
+  set toolbar visible of dmgWindow to false
+  set statusbar visible of dmgWindow to false
+  set the bounds of dmgWindow to {100, 100, $WINDOW_RIGHT, $WINDOW_BOTTOM}
+  set theViewOptions to the icon view options of dmgWindow
+  set arrangement of theViewOptions to not arranged
+  set icon size of theViewOptions to 80
+  set text size of theViewOptions to 14
+  set background picture of theViewOptions to bgAlias
+  set position of item "$SCHEME.app" of dmgFolder to {190, 180}
+  set position of item "Applications" of dmgFolder to {495, 180}
+  update dmgFolder without registering applications
+  delay 5
+  close dmgWindow
 end tell
 EOF
 
-  sync
-  hdiutil detach "$DEVICE" -quiet
+  for _ in {1..10}; do
+    if [[ -f "$DS_STORE_PATH" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ ! -f "$DS_STORE_PATH" ]]; then
+    echo "error: Finder did not persist DMG window metadata (.DS_Store missing)" >&2
+    return 1
+  fi
+
+  for _ in {1..10}; do
+    if ! hdiutil info | grep -q "$MOUNT_DIR"; then
+      DEVICE=""
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -n "${DEVICE:-}" ]]; then
+    sync
+    sleep 1
+    hdiutil detach "$DEVICE" -quiet
+  fi
   trap - EXIT
 
   hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
 }
 
-if [[ -n "${CI:-}" ]]; then
-  create_plain_dmg
+if [[ -n "${CI:-}" || -n "$FORCE_DMGBUILD" ]]; then
+  if has_dmgbuild; then
+    create_dmg_with_dmgbuild
+  else
+    create_plain_dmg
+  fi
 else
   if ! create_styled_dmg; then
     echo "warning: styled DMG packaging failed, falling back to plain DMG" >&2

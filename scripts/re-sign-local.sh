@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-APP_PATH="/Applications/Dual.app"
+APP_PATH="${1:-/Applications/Dual.app}"
 
 if [[ ! -d "$APP_PATH" || "${APP_PATH:e}" != "app" ]]; then
   echo "error: app not found: $APP_PATH"
