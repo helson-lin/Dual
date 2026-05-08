@@ -521,7 +521,6 @@ struct ContentView: View {
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
-            .tracking(0.5)
             .lineLimit(1)
     }
 
