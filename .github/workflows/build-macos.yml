@@ -35,8 +35,12 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           ARTIFACT_LABEL: ${{ matrix.label }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           chmod +x scripts/build-release.sh
+          if [[ -n "$RELEASE_TAG" || "$GITHUB_REF_TYPE" == "tag" ]]; then
+            export BUILD_NUMBER_OVERRIDE="$GITHUB_RUN_NUMBER"
+          fi
           ./scripts/build-release.sh
 
       - name: Upload packaged app

@@ -11,6 +11,38 @@ BUILD_ROOT="${BUILD_ROOT:-$PWD/.build}"
 BACKGROUND_SOURCE="${BACKGROUND_SOURCE:-$PWD/background.png}"
 DMG_WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-660}"
 DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-400}"
+RELEASE_TAG="${RELEASE_TAG:-}"
+VERSION_OVERRIDE="${VERSION_OVERRIDE:-}"
+BUILD_NUMBER_OVERRIDE="${BUILD_NUMBER_OVERRIDE:-}"
+
+if [[ -z "$RELEASE_TAG" && "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+  RELEASE_TAG="$GITHUB_REF_NAME"
+fi
+
+normalize_version_from_tag() {
+  local tag="$1"
+  tag="${tag#v}"
+  tag="${tag%%+*}"
+  if [[ "$tag" =~ ^([0-9]+(\.[0-9]+){0,2})(-[0-9A-Za-z.-]+)?$ ]]; then
+    printf '%s\n' "${match[1]}"
+    return 0
+  fi
+  return 1
+}
+
+if [[ -z "$VERSION_OVERRIDE" && -n "$RELEASE_TAG" ]]; then
+  if VERSION_OVERRIDE=$(normalize_version_from_tag "$RELEASE_TAG"); then
+    echo "==> Using marketing version $VERSION_OVERRIDE from release tag $RELEASE_TAG"
+  else
+    echo "warning: release tag $RELEASE_TAG does not contain a valid numeric app version; using project MARKETING_VERSION" >&2
+    VERSION_OVERRIDE=""
+  fi
+fi
+
+if [[ -z "$BUILD_NUMBER_OVERRIDE" && -n "$RELEASE_TAG" && -n "${GITHUB_RUN_NUMBER:-}" ]]; then
+  BUILD_NUMBER_OVERRIDE="$GITHUB_RUN_NUMBER"
+  echo "==> Using build number $BUILD_NUMBER_OVERRIDE from GITHUB_RUN_NUMBER"
+fi
 
 ARCHIVE_PATH="$BUILD_ROOT/archives/${SCHEME}-${ARTIFACT_LABEL}.xcarchive"
 DERIVED_DATA_PATH="$BUILD_ROOT/DerivedData-${ARTIFACT_LABEL}"
@@ -23,21 +55,31 @@ rm -rf "$ARCHIVE_PATH" "$DERIVED_DATA_PATH" "$EXPORT_DIR" "$DMG_STAGING_DIR" "$D
 mkdir -p "$EXPORT_DIR"
 mkdir -p "$DMG_TEMP_DIR"
 
+XCODEBUILD_ARGS=(
+  -project "$PROJECT_PATH"
+  -scheme "$SCHEME"
+  -configuration "$CONFIGURATION"
+  -destination "generic/platform=macOS"
+  -archivePath "$ARCHIVE_PATH"
+  -derivedDataPath "$DERIVED_DATA_PATH"
+  CODE_SIGNING_ALLOWED=NO
+  CODE_SIGNING_REQUIRED=NO
+  CODE_SIGN_IDENTITY=""
+  ARCHS="$ARCH"
+  MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET"
+  ONLY_ACTIVE_ARCH=NO
+)
+
+if [[ -n "$VERSION_OVERRIDE" ]]; then
+  XCODEBUILD_ARGS+=(MARKETING_VERSION="$VERSION_OVERRIDE")
+fi
+
+if [[ -n "$BUILD_NUMBER_OVERRIDE" ]]; then
+  XCODEBUILD_ARGS+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER_OVERRIDE")
+fi
+
 echo "==> Building $SCHEME ($ARCH / $ARTIFACT_LABEL)"
-xcodebuild \
-  -project "$PROJECT_PATH" \
-  -scheme "$SCHEME" \
-  -configuration "$CONFIGURATION" \
-  -destination "generic/platform=macOS" \
-  -archivePath "$ARCHIVE_PATH" \
-  -derivedDataPath "$DERIVED_DATA_PATH" \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGN_IDENTITY="" \
-  ARCHS="$ARCH" \
-  MACOSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
-  ONLY_ACTIVE_ARCH=NO \
-  clean archive
+xcodebuild "${XCODEBUILD_ARGS[@]}" clean archive
 
 APP_PATH="$ARCHIVE_PATH/Products/Applications/${SCHEME}.app"
 if [[ ! -d "$APP_PATH" ]]; then
@@ -50,9 +92,13 @@ BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Co
 MINIMUM_SYSTEM_VERSION=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
 EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist")
 EXECUTABLE_PATH="$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
-ZIP_NAME="${SCHEME}-${VERSION}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.zip"
+ARTIFACT_VERSION_LABEL="$VERSION"
+if [[ -n "$RELEASE_TAG" ]]; then
+  ARTIFACT_VERSION_LABEL="${RELEASE_TAG#v}"
+fi
+ZIP_NAME="${SCHEME}-${ARTIFACT_VERSION_LABEL}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.zip"
 ZIP_PATH="$EXPORT_DIR/$ZIP_NAME"
-DMG_NAME="${SCHEME}-${VERSION}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.dmg"
+DMG_NAME="${SCHEME}-${ARTIFACT_VERSION_LABEL}-${BUILD_NUMBER}-macos-${ARTIFACT_LABEL}.dmg"
 DMG_PATH="$EXPORT_DIR/$DMG_NAME"
 
 if [[ "$MINIMUM_SYSTEM_VERSION" != "$DEPLOYMENT_TARGET" ]]; then
