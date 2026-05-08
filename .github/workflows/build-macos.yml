@@ -32,8 +32,9 @@ jobs:
 
       - name: Install DMG styling tools
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --target "$PWD/.build/dmg-python" dmgbuild
+          python3 -m venv "$PWD/.build/dmg-python-venv"
+          "$PWD/.build/dmg-python-venv/bin/python" -m pip install --upgrade pip
+          "$PWD/.build/dmg-python-venv/bin/python" -m pip install dmgbuild
 
       - name: Build release artifact
         id: package
@@ -41,9 +42,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
           ARTIFACT_LABEL: ${{ matrix.label }}
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
-          DMGBUILD_PYTHONPATH: ${{ github.workspace }}/.build/dmg-python
         run: |
           chmod +x scripts/build-release.sh
+          export DMGBUILD_PYTHONPATH="$("$PWD/.build/dmg-python-venv/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
           if [[ -n "$RELEASE_TAG" || "$GITHUB_REF_TYPE" == "tag" ]]; then
             export BUILD_NUMBER_OVERRIDE="$GITHUB_RUN_NUMBER"
           fi
