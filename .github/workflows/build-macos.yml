@@ -30,12 +30,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install DMG styling tools
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --target "$PWD/.build/dmg-python" dmgbuild
+
       - name: Build release artifact
         id: package
         env:
           ARCH: ${{ matrix.arch }}
           ARTIFACT_LABEL: ${{ matrix.label }}
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          DMGBUILD_PYTHONPATH: ${{ github.workspace }}/.build/dmg-python
         run: |
           chmod +x scripts/build-release.sh
           if [[ -n "$RELEASE_TAG" || "$GITHUB_REF_TYPE" == "tag" ]]; then

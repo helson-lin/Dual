@@ -10,7 +10,7 @@ DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-13.0}"
 BUILD_ROOT="${BUILD_ROOT:-$PWD/.build}"
 BACKGROUND_SOURCE="${BACKGROUND_SOURCE:-$PWD/background.png}"
 DMG_WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-660}"
-DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-450}"
+DMG_WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-480}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 VERSION_OVERRIDE="${VERSION_OVERRIDE:-}"
 BUILD_NUMBER_OVERRIDE="${BUILD_NUMBER_OVERRIDE:-}"
@@ -153,6 +153,14 @@ has_dmgbuild() {
   fi
 }
 
+has_dmg_style_python() {
+  if [[ -n "$DMGBUILD_PYTHONPATH" ]]; then
+    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 -c "import ds_store, mac_alias" >/dev/null 2>&1
+  else
+    python3 -c "import ds_store, mac_alias" >/dev/null 2>&1
+  fi
+}
+
 create_dmg_with_dmgbuild() {
   local settings_path="$DMG_TEMP_DIR/dmgbuild-settings.json"
 
@@ -191,6 +199,91 @@ EOF
   else
     python3 -m dmgbuild "$SCHEME" "$DMG_PATH" -s "$settings_path" --no-hidpi
   fi
+}
+
+create_dmg_without_finder() {
+  hdiutil create \
+    -srcfolder "$DMG_STAGING_DIR" \
+    -volname "$SCHEME" \
+    -fs HFS+ \
+    -format UDRW \
+    -ov \
+    "$DMG_RW_PATH" >/dev/null
+
+  MOUNT_DIR="$DMG_TEMP_DIR/mount"
+  mkdir -p "$MOUNT_DIR"
+
+  ATTACH_OUTPUT=$(hdiutil attach -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR" "$DMG_RW_PATH")
+  DEVICE=$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/Apple_HFS/ {print $1; exit}')
+
+  cleanup_dmg() {
+    if [[ -n "${DEVICE:-}" ]]; then
+      hdiutil detach "$DEVICE" -quiet || true
+    fi
+  }
+
+  trap cleanup_dmg EXIT
+
+  if [[ -x /usr/bin/SetFile ]]; then
+    /usr/bin/SetFile -a V "$MOUNT_DIR/.background" || true
+  fi
+
+  PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 - "$MOUNT_DIR" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" <<'PY'
+from pathlib import Path
+import sys
+
+from ds_store import DSStore
+from mac_alias import Alias
+
+mount_dir = Path(sys.argv[1])
+window_width = int(sys.argv[2])
+window_height = int(sys.argv[3])
+background = mount_dir / ".background" / "background.png"
+background_alias = Alias.for_file(str(background))
+
+icon_view_options = {
+    "arrangeBy": "none",
+    "backgroundColorBlue": 1.0,
+    "backgroundColorGreen": 1.0,
+    "backgroundColorRed": 1.0,
+    "backgroundImageAlias": background_alias.to_bytes(),
+    "backgroundType": 2,
+    "gridOffsetX": 0.0,
+    "gridOffsetY": 0.0,
+    "gridSpacing": 100.0,
+    "iconSize": 80.0,
+    "labelOnBottom": True,
+    "showIconPreview": False,
+    "showItemInfo": False,
+    "textSize": 14.0,
+    "viewOptionsVersion": 1,
+}
+
+browser_window_state = {
+    "ContainerShowSidebar": False,
+    "ShowPathbar": False,
+    "ShowSidebar": False,
+    "ShowStatusBar": False,
+    "ShowTabView": False,
+    "ShowToolbar": False,
+    "WindowBounds": f"{{{{100, 100}}, {{{window_width}, {window_height}}}}}",
+}
+
+with DSStore.open(str(mount_dir / ".DS_Store"), "w+") as store:
+    store["."]["bwsp"] = browser_window_state
+    store["."]["icvp"] = icon_view_options
+    store["."]["pBB0"] = ("blob", background_alias.to_bytes())
+    store["Dual.app"]["Iloc"] = (190, 180)
+    store["Applications"]["Iloc"] = (495, 180)
+    store.flush()
+PY
+
+  sync
+  hdiutil detach "$DEVICE" -quiet
+  DEVICE=""
+  trap - EXIT
+
+  hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
 }
 
 create_styled_dmg() {
@@ -276,7 +369,15 @@ EOF
   hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
 }
 
-if [[ -n "${CI:-}" || -n "$FORCE_DMGBUILD" ]]; then
+if [[ -n "${CI:-}" ]]; then
+  if has_dmg_style_python; then
+    create_dmg_without_finder
+  else
+    echo "error: ds_store and mac_alias are required for styled CI DMG packaging" >&2
+    echo "Install dmgbuild before running this script, or set DMGBUILD_PYTHONPATH to a directory containing ds_store and mac_alias." >&2
+    exit 1
+  fi
+elif [[ -n "$FORCE_DMGBUILD" ]]; then
   if has_dmgbuild; then
     create_dmg_with_dmgbuild
   else
