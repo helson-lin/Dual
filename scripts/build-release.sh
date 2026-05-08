@@ -358,14 +358,12 @@ if not errors:
         icvl = store["."]["icvl"]
         if icvl != b"icnv" and icvl != (b"type", b"icnv") and icvl != ("type", b"icnv"):
             errors.append("Finder default view metadata is missing or incorrect")
-        try:
-            store["."]["pBBk"]
-        except Exception:
-            errors.append("Finder background bookmark is missing")
         if icon_view_options.get("backgroundType") != 2:
             errors.append("Finder backgroundType is not image background")
         if "backgroundImageAlias" not in icon_view_options:
             errors.append("Finder background image alias is missing")
+        elif not icon_view_options.get("backgroundImageAlias"):
+            errors.append("Finder background image alias is empty")
         if icon_view_options.get("iconSize") != 80.0:
             errors.append("Finder icon size metadata is missing or incorrect")
         expected_bounds = f"{{{{100, 100}}, {{{expected_width}, {expected_height}}}}}"
