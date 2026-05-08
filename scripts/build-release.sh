@@ -145,20 +145,20 @@ create_plain_dmg() {
     "$DMG_PATH" >/dev/null
 }
 
-has_dmgbuild() {
+python_with_dmg_style_path() {
   if [[ -n "$DMGBUILD_PYTHONPATH" ]]; then
-    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 -c "import dmgbuild" >/dev/null 2>&1
+    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 "$@"
   else
-    python3 -c "import dmgbuild" >/dev/null 2>&1
+    python3 "$@"
   fi
 }
 
+has_dmgbuild() {
+  python_with_dmg_style_path -c "import dmgbuild" >/dev/null 2>&1
+}
+
 has_dmg_style_python() {
-  if [[ -n "$DMGBUILD_PYTHONPATH" ]]; then
-    PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 -c "import ds_store, mac_alias" >/dev/null 2>&1
-  else
-    python3 -c "import ds_store, mac_alias" >/dev/null 2>&1
-  fi
+  python_with_dmg_style_path -c "import ds_store, mac_alias" >/dev/null 2>&1
 }
 
 create_dmg_with_dmgbuild() {
@@ -228,7 +228,7 @@ create_dmg_without_finder() {
     /usr/bin/SetFile -a V "$MOUNT_DIR/.background" || true
   fi
 
-  PYTHONPATH="$DMGBUILD_PYTHONPATH" python3 - "$MOUNT_DIR" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" <<'PY'
+  python_with_dmg_style_path - "$MOUNT_DIR" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" <<'PY'
 from pathlib import Path
 import sys
 
@@ -284,6 +284,94 @@ PY
   trap - EXIT
 
   hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG_PATH" >/dev/null
+}
+
+verify_styled_dmg() {
+  if ! has_dmg_style_python; then
+    echo "warning: skipping styled DMG verification because ds_store/mac_alias are unavailable" >&2
+    return 0
+  fi
+
+  local verify_mount="$DMG_TEMP_DIR/verify-mount"
+  local verify_device=""
+  rm -rf "$verify_mount"
+  mkdir -p "$verify_mount"
+
+  local attach_output
+  attach_output=$(hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$verify_mount" "$DMG_PATH")
+  verify_device=$(printf '%s\n' "$attach_output" | awk '/Apple_HFS/ {print $1; exit}')
+
+  cleanup_verify_dmg() {
+    if [[ -n "${verify_device:-}" ]]; then
+      hdiutil detach "$verify_mount" -quiet || hdiutil detach "$verify_device" -quiet || true
+    fi
+  }
+
+  trap cleanup_verify_dmg EXIT
+
+  python_with_dmg_style_path - "$verify_mount" "$DMG_WINDOW_WIDTH" "$DMG_WINDOW_HEIGHT" <<'PY'
+from pathlib import Path
+import sys
+
+from ds_store import DSStore
+
+mount_dir = Path(sys.argv[1])
+expected_width = int(sys.argv[2])
+expected_height = int(sys.argv[3])
+errors = []
+
+background = mount_dir / ".background" / "background.png"
+ds_store = mount_dir / ".DS_Store"
+
+if not background.is_file():
+    errors.append(f"missing background image: {background}")
+if not ds_store.is_file():
+    errors.append(f"missing Finder metadata: {ds_store}")
+
+if not errors:
+    with DSStore.open(str(ds_store), "r") as store:
+        icon_view_options = store["."]["icvp"]
+        browser_window_state = store["."]["bwsp"]
+
+        if icon_view_options.get("backgroundType") != 2:
+            errors.append("Finder backgroundType is not image background")
+        if "backgroundImageAlias" not in icon_view_options:
+            errors.append("Finder background image alias is missing")
+        if icon_view_options.get("iconSize") != 80.0:
+            errors.append("Finder icon size metadata is missing or incorrect")
+        expected_bounds = f"{{{{100, 100}}, {{{expected_width}, {expected_height}}}}}"
+        if browser_window_state.get("WindowBounds") != expected_bounds:
+            errors.append(
+                f"Finder window bounds mismatch: {browser_window_state.get('WindowBounds')} != {expected_bounds}"
+            )
+        if store["Dual.app"]["Iloc"] != (190, 180):
+            errors.append("Dual.app icon location is missing or incorrect")
+        if store["Applications"]["Iloc"] != (495, 180):
+            errors.append("Applications icon location is missing or incorrect")
+
+if errors:
+    for error in errors:
+        print(f"error: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+print("==> Verified styled DMG metadata")
+PY
+
+  for _ in {1..10}; do
+    if hdiutil detach "$verify_mount" -quiet || hdiutil detach "$verify_device" -quiet; then
+      verify_device=""
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -n "$verify_device" ]]; then
+    echo "error: failed to detach DMG verification mount: $verify_mount" >&2
+    return 1
+  fi
+
+  verify_device=""
+  trap - EXIT
 }
 
 create_styled_dmg() {
@@ -392,6 +480,8 @@ else
     create_plain_dmg
   fi
 fi
+
+verify_styled_dmg
 
 shasum -a 256 "$ZIP_PATH" | tee "$ZIP_PATH.sha256"
 shasum -a 256 "$DMG_PATH" | tee "$DMG_PATH.sha256"

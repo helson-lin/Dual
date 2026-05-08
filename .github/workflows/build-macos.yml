@@ -35,6 +35,7 @@ jobs:
           python3 -m venv "$PWD/.build/dmg-python-venv"
           "$PWD/.build/dmg-python-venv/bin/python" -m pip install --upgrade pip
           "$PWD/.build/dmg-python-venv/bin/python" -m pip install dmgbuild
+          "$PWD/.build/dmg-python-venv/bin/python" -c "import ds_store, mac_alias"
 
       - name: Build release artifact
         id: package
@@ -45,6 +46,7 @@ jobs:
         run: |
           chmod +x scripts/build-release.sh
           export DMGBUILD_PYTHONPATH="$("$PWD/.build/dmg-python-venv/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
+          echo "DMGBUILD_PYTHONPATH=$DMGBUILD_PYTHONPATH"
           if [[ -n "$RELEASE_TAG" || "$GITHUB_REF_TYPE" == "tag" ]]; then
             export BUILD_NUMBER_OVERRIDE="$GITHUB_RUN_NUMBER"
           fi
