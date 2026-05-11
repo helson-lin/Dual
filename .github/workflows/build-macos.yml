@@ -42,6 +42,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           ARTIFACT_LABEL: ${{ matrix.label }}
+          DEPLOYMENT_TARGET: 12.0
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           chmod +x scripts/build-release.sh
