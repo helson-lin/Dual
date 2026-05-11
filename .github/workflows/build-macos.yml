@@ -72,7 +72,7 @@ jobs:
     permissions:
       contents: write
     env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      TOKEN: ${{ secrets.TOKEN }}
 
     steps:
       - name: Checkout
@@ -85,7 +85,7 @@ jobs:
 
       - name: Publish GitHub release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ env.TOKEN }}
           TAG_NAME: ${{ github.event.inputs.release_tag || github.ref_name }}
           TARGET_SHA: ${{ github.sha }}
         run: |
@@ -95,11 +95,11 @@ jobs:
           done
 
       - name: Sync Homebrew tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.TOKEN != ''
         env:
           DIST_DIR: dist
           RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
-          TAP_GIT_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+          TAP_GIT_TOKEN: ${{ env.TOKEN }}
         run: |
           chmod +x scripts/sync-homebrew-tap.sh
           ./scripts/sync-homebrew-tap.sh
