@@ -71,8 +71,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -88,3 +93,13 @@ jobs:
           find dist -type f -maxdepth 2 -print0 | while IFS= read -r -d '' file; do
             gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$file"
           done
+
+      - name: Sync Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          DIST_DIR: dist
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+          TAP_GIT_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+        run: |
+          chmod +x scripts/sync-homebrew-tap.sh
+          ./scripts/sync-homebrew-tap.sh
