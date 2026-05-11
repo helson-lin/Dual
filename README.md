@@ -45,32 +45,55 @@ The app uses SwiftUI for the interface and an `AppCloner` pipeline behind the sc
 
 The repository includes a GitHub Actions workflow that builds macOS `zip` and `dmg` artifacts for Intel and Apple Silicon, and can publish them to GitHub Releases on tagged or manually triggered runs.
 
+## Install with Homebrew
+
+You can install Dual from the `helson-lin/tap` Homebrew tap:
+
+```bash
+brew tap helson-lin/tap
+brew install --cask helson-lin/tap/dual
+```
+
+If you are upgrading from a broken or manually removed app bundle, clear the old cask record first:
+
+```bash
+brew uninstall --cask --force helson-lin/tap/dual
+brew install --cask helson-lin/tap/dual
+```
+
 ## Installing Test Releases
 
 Current GitHub Releases are unsigned and not notarized. That means macOS Gatekeeper may show messages such as `"Dual" is damaged and can’t be opened` or block the app on first launch. This is expected for the current test distribution flow.
 
 Recommended install flow for testers:
 
-1. Move `Dual.app` into `/Applications`.
-2. Remove the quarantine attribute:
+1. Install with Homebrew:
 
 ```bash
-./scripts/remove-quarantine.sh /Applications/Dual.app
+brew tap helson-lin/tap
+brew install --cask helson-lin/tap/dual
 ```
 
-3. If macOS still blocks launch, apply a local ad-hoc signature:
+2. Or manually download the latest release and move `Dual.app` into `/Applications`.
+3. Remove the quarantine attribute:
 
 ```bash
-./scripts/re-sign-local.sh /Applications/Dual.app
+xattr -cr /Applications/Dual.app
 ```
 
-4. Launch the app with Finder -> right click -> `Open` on the first run if needed.
+4. If macOS still blocks launch, apply a local ad-hoc signature:
+
+```bash
+codesign --force --deep --sign - /Applications/Dual.app
+```
+
+5. Launch the app with Finder -> right click -> `Open` on the first run if needed.
 
 Important constraints:
 
 - This is a temporary workaround for test builds only.
 - Public distribution without Apple Developer signing and notarization will remain unreliable across macOS versions.
-- The helper scripts accept a custom app path if the app is not installed in `/Applications`.
+- Replace `/Applications/Dual.app` with your actual app path if you installed it somewhere else.
 
 ## Project Structure
 

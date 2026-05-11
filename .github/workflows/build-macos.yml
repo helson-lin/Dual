@@ -72,7 +72,7 @@ jobs:
     permissions:
       contents: write
     env:
-      TOKEN: ${{ secrets.TOKEN }}
+      GH_TOKEN: ${{ secrets.TOKEN }}
 
     steps:
       - name: Checkout
@@ -83,9 +83,15 @@ jobs:
         with:
           path: dist
 
+      - name: Validate GitHub token
+        run: |
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "error: required secret TOKEN is missing or unavailable in this workflow run" >&2
+            exit 1
+          fi
+
       - name: Publish GitHub release assets
         env:
-          GH_TOKEN: ${{ env.TOKEN }}
           TAG_NAME: ${{ github.event.inputs.release_tag || github.ref_name }}
           TARGET_SHA: ${{ github.sha }}
         run: |
@@ -95,11 +101,11 @@ jobs:
           done
 
       - name: Sync Homebrew tap
-        if: env.TOKEN != ''
+        if: env.GH_TOKEN != ''
         env:
           DIST_DIR: dist
           RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
-          TAP_GIT_TOKEN: ${{ env.TOKEN }}
+          TAP_GIT_TOKEN: ${{ env.GH_TOKEN }}
         run: |
           chmod +x scripts/sync-homebrew-tap.sh
           ./scripts/sync-homebrew-tap.sh
