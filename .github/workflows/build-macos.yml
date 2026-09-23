@@ -168,9 +168,10 @@ jobs:
               --ed-key-file - \
               --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG_NAME/" \
               --link "https://github.com/$GITHUB_REPOSITORY" \
-              --output "appcast-${label}.xml" \
+              -o "appcast-${label}.xml" \
               "updates-${label}"
-            [[ -s "appcast-${label}.xml" ]] || { echo "error: appcast-${label}.xml was not generated" >&2; exit 1; }
+            [[ -s "updates-${label}/appcast-${label}.xml" ]] || { echo "error: appcast-${label}.xml was not generated" >&2; exit 1; }
+            cp "updates-${label}/appcast-${label}.xml" "appcast-${label}.xml"
           done
 
 
