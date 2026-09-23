@@ -198,6 +198,8 @@ enum AppCloner {
             logger: logger
         )
         patchElectronAsarFuse(appPath: destinationApp, localeIdentifier: localeIdentifier, logger: logger)
+        try installElectronLauncher(appPath: destinationApp, bundleIdentifier: bundleIdentifier)
+
 
         logger(L10n.string("cloner.log.clearExtendedAttributes", localeIdentifier: localeIdentifier))
         runAllowFailure(
@@ -678,6 +680,27 @@ enum AppCloner {
         }
     }
 
+    private static func installElectronLauncher(appPath: String, bundleIdentifier: String) throws {
+        guard FileManager.default.fileExists(atPath: appPath + "/Contents/Frameworks/Electron Framework.framework") else { return }
+        let plist = appPath + "/Contents/Info.plist"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
+              let values = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let executable = values["CFBundleExecutable"] as? String else {
+            throw AppClonerError.invalidInfoPlist(path: plist)
+        }
+        let binary = URL(fileURLWithPath: appPath + "/Contents/MacOS/" + executable)
+        try FileManager.default.moveItem(at: binary, to: binary.appendingPathExtension("dual-original"))
+        let launcher = """
+        #!/bin/sh
+        dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+        original=\(shellEscape(executable + ".dual-original"))
+        profile=\(shellEscape(bundleIdentifier))
+        exec "$dir/$original" --user-data-dir="$HOME/Library/Application Support/$profile" "$@"
+        """
+        try launcher.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+    }
+
     private static func readBundleIdentifier(appPath: String) -> String? {
         let plistPath = appPath + "/Contents/Info.plist"
         guard
@@ -904,6 +927,13 @@ enum AppCloner {
             }
         }
         ' \(shellEscape(destinationApp)) 2>/dev/null || true
+        if [ -d \(shellEscape(destinationApp + "/Contents/Frameworks/Electron Framework.framework")) ]; then
+          EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \(shellEscape(infoPlist)))
+          MACOS_DIR=\(shellEscape(destinationApp + "/Contents/MacOS"))
+          mv "$MACOS_DIR/$EXEC_NAME" "$MACOS_DIR/$EXEC_NAME.dual-original"
+          printf '#!/bin/sh\\ndir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\\noriginal=%q\\nprofile=%q\\nexec "$dir/$original" --user-data-dir="$HOME/Library/Application Support/$profile" "$@"\\n' "$EXEC_NAME.dual-original" \(shellEscape(bundleIdentifier)) > "$MACOS_DIR/$EXEC_NAME"
+          chmod 755 "$MACOS_DIR/$EXEC_NAME"
+        fi
         /usr/bin/xattr -cr \(shellEscape(destinationApp)) >/dev/null 2>&1 || true
         /usr/bin/codesign --force --deep --sign - \(shellEscape(destinationApp))
         """
