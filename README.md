@@ -24,6 +24,7 @@ Dual copies a selected `.app` bundle to a new destination, rewrites its display 
 - Remove stale quarantine attributes and re-sign the cloned bundle.
 - Request administrator privileges when the destination requires elevated access.
 - Track existing clones and show their source/up-to-date status, with a live log panel and a Finder reveal action after success.
+- Import an existing clone by selecting its `.app`; match its original under `/Applications` when possible, otherwise prompt for the source.
 - Localized UI in English and Simplified Chinese.
 
 ## Requirements
