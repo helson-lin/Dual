@@ -165,14 +165,12 @@ jobs:
           # piped from a file. '%' is never a valid base64 character, so
           # trimming one unconditionally can't corrupt an already-correct key.
           SPARKLE_PRIVATE_ED_KEY="${SPARKLE_PRIVATE_ED_KEY%\%}"
-          # Diagnostics only: shape/length/decoded byte count, never the value itself.
-          echo "debug: private key length=${#SPARKLE_PRIVATE_ED_KEY} first='${SPARKLE_PRIVATE_ED_KEY:0:1}' last='${SPARKLE_PRIVATE_ED_KEY: -1}'"
-          if [[ "$SPARKLE_PRIVATE_ED_KEY" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
-            echo "debug: charset looks like base64"
-          else
-            echo "debug: charset is NOT base64 (contains chars outside A-Za-z0-9+/=)"
-          fi
-          echo "debug: decoded byte length=$(printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | base64 -D 2>/dev/null | wc -c | tr -d ' ')  (expect 32 for a raw seed)"
+          # One-off: persist the corrected value back to the secret so future
+          # runs don't depend on this trim. Best-effort -- TOKEN may not carry
+          # the "secrets: write" permission, in which case this is a no-op.
+          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | gh secret set SPARKLE_PRIVATE_ED_KEY --repo "$GITHUB_REPOSITORY" \
+            && echo "debug: rewrote SPARKLE_PRIVATE_ED_KEY secret without the trailing artifact" \
+            || echo "warning: could not rewrite SPARKLE_PRIVATE_ED_KEY secret (insufficient token permission?); continuing with the in-memory fix"
           xcodebuild -resolvePackageDependencies -project Dual.xcodeproj -scheme Dual -derivedDataPath .build/DerivedData-updates
           GENERATE_APPCAST=$(find .build/DerivedData-updates/SourcePackages/artifacts -type f -name generate_appcast -perm -111 -print -quit)
           [[ -n "$GENERATE_APPCAST" ]] || { echo "error: Sparkle generate_appcast was not found" >&2; exit 1; }
@@ -188,8 +186,7 @@ jobs:
               --link "https://github.com/$GITHUB_REPOSITORY" \
               -o "appcast-${label}.xml" \
               "updates-${label}"
-            [[ -s "updates-${label}/appcast-${label}.xml" ]] || { echo "error: appcast-${label}.xml was not generated" >&2; exit 1; }
-            cp "updates-${label}/appcast-${label}.xml" "appcast-${label}.xml"
+            [[ -s "appcast-${label}.xml" ]] || { echo "error: appcast-${label}.xml was not generated" >&2; exit 1; }
           done
 
 
