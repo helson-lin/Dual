@@ -16,6 +16,13 @@ VERSION_OVERRIDE="${VERSION_OVERRIDE:-}"
 BUILD_NUMBER_OVERRIDE="${BUILD_NUMBER_OVERRIDE:-}"
 DMGBUILD_PYTHONPATH="${DMGBUILD_PYTHONPATH:-}"
 FORCE_DMGBUILD="${FORCE_DMGBUILD:-}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
+NOTARY_KEY_PATH="${NOTARY_KEY_PATH:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER_ID="${NOTARY_ISSUER_ID:-}"
+REQUIRE_SIGNING="${REQUIRE_SIGNING:-}"
+SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://github.com/helson-lin/Dual/releases/latest/download/appcast-${ARTIFACT_LABEL}.xml}"
 
 if [[ -z "$RELEASE_TAG" && "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
   RELEASE_TAG="$GITHUB_REF_NAME"
@@ -57,6 +64,18 @@ DMG_STAGING_BACKGROUND="$DMG_STAGING_DIR/.background/background.png"
 rm -rf "$ARCHIVE_PATH" "$DERIVED_DATA_PATH" "$EXPORT_DIR" "$DMG_STAGING_DIR" "$DMG_TEMP_DIR"
 mkdir -p "$EXPORT_DIR"
 mkdir -p "$DMG_TEMP_DIR"
+if [[ -n "$REQUIRE_SIGNING" && ( -z "$SIGNING_IDENTITY" || -z "$NOTARY_KEY_PATH" || -z "$NOTARY_KEY_ID" || -z "$NOTARY_ISSUER_ID" || -z "$SPARKLE_PUBLIC_ED_KEY" ) ]]; then
+  echo "error: signing, notarization, and SPARKLE_PUBLIC_ED_KEY values are required when REQUIRE_SIGNING is set" >&2
+  exit 1
+fi
+
+notarize() {
+  xcrun notarytool submit "$1" \
+    --key "$NOTARY_KEY_PATH" \
+    --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER_ID" \
+    --wait
+}
 
 XCODEBUILD_ARGS=(
   -project "$PROJECT_PATH"
@@ -80,6 +99,10 @@ fi
 if [[ -n "$BUILD_NUMBER_OVERRIDE" ]]; then
   XCODEBUILD_ARGS+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER_OVERRIDE")
 fi
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  XCODEBUILD_ARGS+=(SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" SPARKLE_FEED_URL="$SPARKLE_FEED_URL")
+fi
+
 
 echo "==> Building $SCHEME ($ARCH / $ARTIFACT_LABEL)"
 xcodebuild "${XCODEBUILD_ARGS[@]}" clean archive
@@ -116,6 +139,32 @@ if ! /usr/bin/lipo -archs "$EXECUTABLE_PATH" | tr ' ' '\n' | grep -qx "$ARCH"; t
 fi
 
 echo "==> Verified minimum macOS $MINIMUM_SYSTEM_VERSION and architecture $ARCH"
+if [[ -n "$SIGNING_IDENTITY" ]]; then
+  echo "==> Signing $SCHEME.app"
+  SPARKLE_FRAMEWORK="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+  if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
+    SPARKLE_VERSION="$SPARKLE_FRAMEWORK/Versions/Current"
+    [[ -d "$SPARKLE_VERSION/XPCServices/Installer.xpc" ]] && codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+    [[ -d "$SPARKLE_VERSION/XPCServices/Downloader.xpc" ]] && codesign --force --options runtime --timestamp --preserve-metadata=entitlements --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+    [[ -e "$SPARKLE_VERSION/Autoupdate" ]] && codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION/Autoupdate"
+    [[ -d "$SPARKLE_VERSION/Updater.app" ]] && codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION/Updater.app"
+    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$SPARKLE_FRAMEWORK"
+  fi
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_PATH"
+  codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+  APP_NOTARY_ZIP="$DMG_TEMP_DIR/${SCHEME}-notarization.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$APP_NOTARY_ZIP"
+  notarize "$APP_NOTARY_ZIP"
+  rm -f "$APP_NOTARY_ZIP"
+  xcrun stapler staple "$APP_PATH"
+  xcrun stapler validate "$APP_PATH"
+  spctl --assess --type execute --verbose=4 "$APP_PATH"
+elif [[ -n "$REQUIRE_SIGNING" ]]; then
+  echo "error: refusing to package an unsigned release" >&2
+  exit 1
+fi
+
 
 echo "==> Packaging $ZIP_NAME"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
@@ -523,6 +572,16 @@ else
 fi
 
 verify_styled_dmg
+if [[ -n "$SIGNING_IDENTITY" ]]; then
+  echo "==> Signing and notarizing $DMG_NAME"
+  codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG_PATH"
+  codesign --verify --verbose=2 "$DMG_PATH"
+  notarize "$DMG_PATH"
+  xcrun stapler staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
+fi
+
 
 shasum -a 256 "$ZIP_PATH" | tee "$ZIP_PATH.sha256"
 shasum -a 256 "$DMG_PATH" | tee "$DMG_PATH.sha256"

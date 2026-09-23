@@ -10,16 +10,54 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct WindowConfigurator: NSViewRepresentable {
+    /// The window is fixed-size and non-resizable, so this is both the
+    /// content's `.frame` and the size forced on the `NSWindow`. Forcing it
+    /// on every `configure` call overrides AppKit's automatic per-scene
+    /// frame autosave, which otherwise restores a stale size from before
+    /// the window became fixed-size.
+    static let fixedContentSize = CGSize(width: 860, height: 680)
+
+    final class Coordinator: NSObject {
+        var observers: [NSObjectProtocol] = []
+
+        deinit {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.isMovableByWindowBackground = true
-            window.backgroundColor = .clear
-            window.toolbar = nil
-            window.standardWindowButton(.zoomButton)?.isHidden = false
+            configure(window)
+
+            if context.coordinator.observers.isEmpty {
+                let center = NotificationCenter.default
+                let keyToken = center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { note in
+                    guard let window = note.object as? NSWindow else { return }
+                    applyFullScreenPolicy(to: window)
+                }
+                let mainToken = center.addObserver(forName: NSWindow.didBecomeMainNotification, object: window, queue: .main) { note in
+                    guard let window = note.object as? NSWindow else { return }
+                    applyFullScreenPolicy(to: window)
+                }
+                let updateToken = center.addObserver(forName: NSApplication.didUpdateNotification, object: nil, queue: .main) { _ in
+                    // SwiftUI can rewrite collectionBehavior at any point in the
+                    // scene's life, so heal it instead of setting it once.
+                    guard !window.collectionBehavior.contains(.fullScreenNone) else { return }
+                    applyFullScreenPolicy(to: window)
+                    hideFullScreenMenuItem()
+                }
+                let resizeToken = center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { note in
+                    guard let window = note.object as? NSWindow else { return }
+                    enforceFixedSize(on: window)
+                }
+                context.coordinator.observers = [keyToken, mainToken, updateToken, resizeToken]
+            }
         }
         return view
     }
@@ -27,11 +65,76 @@ struct WindowConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = nsView.window else { return }
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.isMovableByWindowBackground = true
-            window.backgroundColor = .clear
-            window.toolbar = nil
+            configure(window)
+        }
+    }
+
+    private func configure(_ window: NSWindow) {
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .clear
+
+        // An empty unified toolbar is what makes AppKit lay the traffic lights out
+        // on the unified titlebar line, i.e. the vertical center of `toolbarHeight`.
+        // Without it they sit in the 28pt titlebar, well above the toolbar content.
+        if window.toolbar == nil {
+            let toolbar = NSToolbar()
+            toolbar.showsBaselineSeparator = false
+            window.toolbar = toolbar
+            window.toolbarStyle = .unified
+        }
+        // Full screen is off, and the window has a single fixed size: nothing
+        // to zoom or drag-resize to, so both are disabled outright.
+        applyFullScreenPolicy(to: window)
+        hideFullScreenMenuItem()
+        window.styleMask.remove(.resizable)
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
+        if window.contentView?.frame.size != Self.fixedContentSize {
+            window.setContentSize(Self.fixedContentSize)
+        }
+        // Belt and suspenders: macOS can still grow the frame outside of
+        // drag-resize (edge tiling, Stage Manager, scripted `set size of
+        // window`), which would expose the window's clear background past
+        // the fixed-size content. Pinning min/max to the same frame blocks
+        // every path, not just the ones gated by `.resizable`.
+        window.minSize = window.frame.size
+        window.maxSize = window.frame.size
+    }
+
+    /// `minSize`/`maxSize` only constrain interactive drag-resizing. Window
+    /// tiling (edge-drag, Stage Manager, the Window menu's Move & Resize
+    /// commands) and scripted `setFrame` calls set the frame directly and
+    /// skip that constraint, which would grow the window past its fixed
+    /// content and expose the clear background behind it. Snap back
+    /// immediately whenever the frame drifts from the fixed size.
+    private func enforceFixedSize(on window: NSWindow) {
+        let fixedSize = window.minSize
+        guard fixedSize.width > 0, fixedSize.height > 0, window.frame.size != fixedSize else { return }
+        var frame = window.frame
+        frame.origin.y += frame.size.height - fixedSize.height
+        frame.size = fixedSize
+        window.setFrame(frame, display: true)
+    }
+
+    private func applyFullScreenPolicy(to window: NSWindow) {
+        window.collectionBehavior.remove(.fullScreenPrimary)
+        window.collectionBehavior.remove(.fullScreenAuxiliary)
+        window.collectionBehavior.insert(.fullScreenNone)
+    }
+
+    /// The window refuses full screen, so AppKit's menu item would just no-op.
+    /// Hidden rather than removed: AppKit re-adds the item, and a hidden item
+    /// survives that far better than a removed one. Matched by selector, not
+    /// title, since the title is localized.
+    private func hideFullScreenMenuItem() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        for menuItem in mainMenu.items {
+            guard let submenu = menuItem.submenu else { continue }
+            for item in submenu.items where item.action == #selector(NSWindow.toggleFullScreen(_:)) {
+                item.isHidden = true
+            }
         }
     }
 }
@@ -104,25 +207,6 @@ private struct FocuslessTextField: NSViewRepresentable {
     }
 }
 
-private struct BottomActionSurfaceStyle: ViewModifier {
-    let fill: Color
-    let stroke: Color
-
-    func body(content: Content) -> some View {
-        content
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(fill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(stroke, lineWidth: 1)
-            )
-    }
-}
 
 struct ContentView: View {
     private struct CloneRequest {
@@ -131,6 +215,7 @@ struct ContentView: View {
         let bundleIdentifier: String
         let destinationDirectory: String
         let clearDataBeforeClone: Bool
+        let addCloneBadge: Bool
     }
 
     private struct SuggestedApp: Identifiable {
@@ -140,11 +225,29 @@ struct ContentView: View {
         let icon: NSImage
     }
 
+    private struct CloneRecord: Codable, Identifiable {
+        var id: String { destinationAppPath }
+        let sourceAppPath: String
+        let destinationAppPath: String
+        let cloneName: String
+        let bundleIdentifier: String
+        let addCloneBadge: Bool
+        let updatedAt: Date
+    }
+
+    private static let cloneRecordsKey = "dual.cloneRecords"
+
+    /// Clones land in their own folder so they never sit next to the originals.
+    /// Created on demand by `ensureWritableDirectory(_:)` if it doesn't exist.
+    private static let defaultDestinationDirectory = "/Applications/Cloned"
+
     @State private var sourceAppPath = ""
     @State private var cloneName = ""
     @State private var bundleIdentifier = ""
-    @State private var destinationDirectory = "/Applications"
+    @State private var destinationDirectory = Self.defaultDestinationDirectory
     @State private var clearDataBeforeClone = true
+    @State private var addCloneBadge = true
+    @State private var showClonePanel = false
     @State private var isProcessing = false
     @State private var logText = ""
     @State private var logQueue: [Character] = []
@@ -157,53 +260,28 @@ struct ContentView: View {
     @State private var showAdminPrivilegeAlert = false
     @State private var pendingAdminRequest: CloneRequest?
     @State private var suggestedApps: [SuggestedApp] = []
-    @State private var iconScale: CGFloat = 1.0
+    @State private var cloneRecords: [CloneRecord] = []
     @State private var cloneSuccess = false
-    @State private var isButtonHovered = false
-    @State private var isButtonPressed = false
     @State private var progressPhase: CGFloat = 0.0
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var riskAccepted = false
+    @State private var toast: DualToast?
+    @State private var toastDismissTask: Task<Void, Never>?
+    @State private var hoveredRecordID: String?
+    @State private var isDropZoneHovered = false
+    @State private var hoveredSuggestionID: String?
+    @AppStorage("dual.hasSeenWelcome") private var hasSeenWelcome = false
 
     private var isDark: Bool { colorScheme == .dark }
+    private var palette: DualPalette { DualPalette(isDark: isDark) }
 
-    private var panelBackground: Color {
-        isDark ? Color(red: 0.24, green: 0.245, blue: 0.25).opacity(0.74) : Color.white.opacity(0.7)
-    }
-    private var panelStroke: Color {
-        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.05)
-    }
-    private var cardBackground: Color {
-        isDark ? Color.white.opacity(0.075) : Color.white.opacity(0.5)
-    }
-    private var cardStroke: Color {
-        isDark ? Color.white.opacity(0.13) : Color.white.opacity(0.42)
-    }
-    private var inputBackground: Color {
-        isDark ? Color.white.opacity(0.08) : Color(red: 0.96, green: 0.965, blue: 0.975)
-    }
-    private var inputStroke: Color {
-        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.06)
-    }
-    private var secondaryButtonText: Color {
-        isDark ? Color(white: 0.88) : Color(red: 0.2, green: 0.23, blue: 0.28)
-    }
-    private var bottomGradientColors: [Color] {
-        isDark
-            ? [Color.white.opacity(0.0), Color.white.opacity(0.025), Color.white.opacity(0.04)]
-            : [Color.white.opacity(0.0), Color.white.opacity(0.1), Color.white.opacity(0.18)]
-    }
-    private var bottomDividerColor: Color {
-        isDark ? Color.white.opacity(0.08) : Color.white.opacity(0.22)
-    }
-    private var riskSurfaceFill: Color {
-        isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.56)
-    }
-    private var riskSurfaceStroke: Color {
-        isDark ? Color.white.opacity(0.12) : Color.white.opacity(0)
-    }
-    private var riskTextColor: Color {
-        isDark ? Color.white.opacity(0.72) : Color.primary.opacity(0.62)
-    }
+    /// Horizontal inset of the scrolling content, matching the design's `clamp(26px, 5vw, 54px)`.
+    private static let contentInset: CGFloat = 54
+
+    /// Drives both the SwiftUI toolbar and the stretched titlebar behind it.
+    private static let toolbarHeight: CGFloat = 52
 
     private var primaryActionTitle: String {
         if isProcessing {
@@ -212,41 +290,64 @@ struct ContentView: View {
         if cloneSuccess {
             return localized("common.openNow")
         }
-        return localized("common.clone")
+        return localized("action.startClone")
+    }
+
+    /// The three states a clone row can be in, shared by the row and "Check updates".
+    private enum CloneStatus {
+        case sourceMissing
+        case needsUpdate
+        case upToDate
+    }
+
+    private func status(of record: CloneRecord) -> CloneStatus {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: record.sourceAppPath) else { return .sourceMissing }
+        guard fileManager.fileExists(atPath: record.destinationAppPath) else { return .upToDate }
+        let sourceFingerprint = appVersionFingerprint(for: record.sourceAppPath)
+        let cloneFingerprint = appVersionFingerprint(for: record.destinationAppPath)
+        return sourceFingerprint == cloneFingerprint ? .upToDate : .needsUpdate
     }
 
     var body: some View {
         ZStack {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-                .overlay(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.18),
-                            Color(red: 0.86, green: 0.91, blue: 0.98).opacity(0.12)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            palette.canvas
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 topToolbar
 
-                GeometryReader { _ in
-                    HStack(alignment: .top, spacing: 0) {
-                        dropArea
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        rightPanel
-                            .frame(width: 360)
-                    }
+                if showingLog {
+                    logPanel
+                        .padding(24)
+                } else {
+                    workspace
                 }
             }
+            .ignoresSafeArea(.container, edges: .top)
 
+            if !hasSeenWelcome {
+                WelcomeOverlay(palette: palette) {
+                    withAnimation(motion(DualMotion.standard)) {
+                        hasSeenWelcome = true
+                    }
+                }
+                .transition(.opacity)
+            }
         }
-        .frame(minWidth: 740, minHeight: 520)
+        .overlay(alignment: .bottom) {
+            if let toast {
+                DualToastView(palette: palette, message: toast.message)
+                    .padding(.bottom, 26)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .environment(\.dualPalette, palette)
+        .frame(width: WindowConfigurator.fixedContentSize.width, height: WindowConfigurator.fixedContentSize.height)
         .background(WindowConfigurator())
+        .sheet(isPresented: $showClonePanel) {
+            cloneSheet.frame(width: 520)
+        }
         .alert(localized("admin.alert.title"), isPresented: $showAdminPrivilegeAlert) {
             Button(localized("common.cancel"), role: .cancel) {
                 pendingAdminRequest = nil
@@ -261,380 +362,592 @@ struct ContentView: View {
         .onAppear {
             appIcon = nil
             suggestedApps = loadSuggestedApps()
+            cloneRecords = loadCloneRecords()
+            // Anyone who already has clones has long since read the pitch.
+            if !cloneRecords.isEmpty {
+                hasSeenWelcome = true
+            }
         }
     }
+
+    // MARK: - Toolbar
 
     private var topToolbar: some View {
-        Color.clear
-            .frame(height: 0)
-    }
+        HStack(spacing: 18) {
+            // Clears the traffic lights (they end at x ≈ 80 from the window edge)
+            // and, with the stack's own 18pt spacing, keeps the design's gap
+            // between them and the first label.
+            Color.clear
+                .frame(width: 58, height: 1)
 
-    private var rightPanel: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(panelBackground)
+            Text("Dual")
+                .font(.system(size: 14, weight: .bold))
+                .tracking(-0.15)
+                .lineLimit(1)
+                .fixedSize()
 
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(panelStroke, lineWidth: 1)
+            // Rectangle()
+            //     .fill(palette.line)
+            //     .frame(width: 1, height: 20)
 
-            VStack(alignment: .leading, spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        sectionCard {
-                            sectionLabel(localized("section.source"))
-                            secondaryButton(localized("action.chooseSourceApp")) { pickSourceApp() }
-                                .disabled(isProcessing)
-                                .focusable(false)
-                        }
-                        .padding(.top, 8)
+            // Text(localized("toolbar.workspace"))
+            //     .font(.system(size: 13, weight: .semibold))
+            //     .foregroundColor(palette.muted)
+            //     .lineLimit(1)
+            //     .fixedSize()
 
-                        sectionCard {
-                            sectionLabel(localized("section.cloneSettings"))
-                            labeledField(localized("field.cloneDisplayName"), text: $cloneName)
-                            labeledField(localized("field.bundleIdentifier"), text: $bundleIdentifier)
-                        }
+            Spacer(minLength: 12)
 
-                        sectionCard {
-                            sectionLabel(localized("section.destination"))
-                            labeledField(localized("field.destinationDirectory"), text: $destinationDirectory)
-                            secondaryButton(localized("action.chooseDestinationDirectory")) { pickDestinationDirectory() }
-                                .disabled(isProcessing)
-                            settingToggleRow(localized("setting.clearCloneData"), isOn: $clearDataBeforeClone)
-                        }
-
+            if isProcessing && !showingLog {
+                Button {
+                    withAnimation(motion(DualMotion.standard)) {
+                        showingLog = true
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 0)
-                    .padding(.bottom, 4)
+                } label: {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.65)
+                        Text(localized("log.status.processing"))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(palette.accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(palette.accentSoft)
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .layoutPriority(1)
-                .clipped()
-
-                VStack(spacing: 8) {
-                    if !errorText.isEmpty {
-                        bottomActionSurface(
-                            fill: Color(red: 1.0, green: 0.96, blue: 0.95).opacity(0.95),
-                            stroke: Color(red: 0.91, green: 0.42, blue: 0.34).opacity(0.25)
-                        ) {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(Color(red: 0.84, green: 0.34, blue: 0.24))
-                                    .padding(.top, 1)
-
-                                Text(errorText)
-                                    .font(.system(size: 10.5, weight: .medium))
-                                    .foregroundStyle(Color(red: 0.74, green: 0.28, blue: 0.2))
-                                    .fixedSize(horizontal: false, vertical: true)
-
-                                Spacer(minLength: 0)
-                            }
-                        }
-                    }
-
-                    bottomActionSurface(fill: riskSurfaceFill, stroke: riskSurfaceStroke) {
-                        HStack(alignment: .top, spacing: 14) {
-                            Image(systemName: "exclamationmark.shield")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.72, green: 0.46, blue: 0.12))
-                                .padding(.top, 1)
-
-                            Text(localized("disclaimer.risk"))
-                                .font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(riskTextColor)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Spacer(minLength: 0)
-                        }
-                    }
-
-                    Button {
-                        if cloneSuccess, !lastOutputPath.isEmpty {
-                            openApp(path: lastOutputPath)
-                        } else {
-                            runCloneFlow()
-                        }
-                    } label: {
-                        bottomActionSurface(
-                            fill: isProcessing
-                                ? Color(red: 0.88, green: 0.89, blue: 0.91)
-                                : cloneSuccess
-                                ? Color(red: 0.18, green: 0.72, blue: 0.42)
-                                : isButtonPressed
-                                ? Color(red: 0.12, green: 0.32, blue: 0.78)
-                                : isButtonHovered
-                                ? Color(red: 0.15, green: 0.38, blue: 0.88)
-                                : Color(red: 0.2, green: 0.45, blue: 0.95),
-                            stroke: isProcessing
-                                ? Color(red: 0.82, green: 0.84, blue: 0.86)
-                                : cloneSuccess
-                                ? Color(red: 0.14, green: 0.62, blue: 0.36)
-                                : isButtonHovered
-                                ? Color(red: 0.12, green: 0.32, blue: 0.82)
-                                : Color(red: 0.16, green: 0.38, blue: 0.88)
-                        ) {
-                            ZStack {
-                                Text(primaryActionTitle)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-
-                                HStack(spacing: 8) {
-                                    if isProcessing {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                            .scaleEffect(0.8)
-                                    } else if cloneSuccess {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.white)
-                                            .transition(.scale.combined(with: .opacity))
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .disabled(isProcessing)
-                    .keyboardShortcut(.defaultAction)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isProcessing ? Color(red: 0.58, green: 0.6, blue: 0.64) : .white)
-                    .shadow(
-                        color: isProcessing
-                            ? .clear
-                            : cloneSuccess
-                            ? Color(red: 0.18, green: 0.72, blue: 0.42).opacity(0.3)
-                            : isButtonHovered
-                            ? Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.35)
-                            : Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.25),
-                        radius: isButtonHovered ? 16 : 12,
-                        x: 0,
-                        y: isButtonHovered ? 6 : 4
-                    )
-                    .scaleEffect(isButtonPressed ? 0.98 : 1.0)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isButtonHovered = hovering
-                        }
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { _ in
-                                if !isButtonPressed {
-                                    withAnimation(.easeOut(duration: 0.08)) {
-                                        isButtonPressed = true
-                                    }
-                                }
-                            }
-                            .onEnded { _ in
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
-                                    isButtonPressed = false
-                                }
-                            }
-                    )
-                    .buttonStyle(.plain)
-                    .animation(.easeInOut(duration: 0.3), value: cloneSuccess)
-                    .animation(.easeInOut(duration: 0.2), value: isProcessing)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 6)
-                .padding(.bottom, 14)
-                .background(
-                    LinearGradient(
-                        colors: bottomGradientColors,
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                .buttonStyle(.plain)
+                .help(localized("log.status.processing"))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.top, 0)
-        .padding(.trailing, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 22)
+        .frame(height: Self.toolbarHeight)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(palette.line)
+                .frame(height: 1)
+        }
     }
 
-    private func sectionCard<Content: View>(spacing: CGFloat = 10, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            content()
+    // MARK: - Workspace
+
+    private var workspace: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            dropZone
+
+            cloneRecordsSection
+                .padding(.top, 30)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .padding(.horizontal, Self.contentInset)
+        .padding(.top, 34)
+        .padding(.bottom, 34)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Drop zone
+
+    private var dropZone: some View {
+        HStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(sourceAppPath.isEmpty ? localized("drop.title.empty") : localized("status.sourceAppSelected"))
+                    .font(.system(size: 24, weight: .bold))
+                    .tracking(-0.6)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(sourceAppPath.isEmpty ? localized("drop.subtitle.empty") : localized("drop.subtitle.selected"))
+                    .font(.system(size: 13))
+                    .foregroundColor(palette.muted)
+                    .lineSpacing(2)
+                    .padding(.top, 9)
+                    .frame(maxWidth: 500, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 9) {
+                    Button(sourceAppPath.isEmpty ? localized("action.chooseSourceApp") : localized("common.continue")) {
+                        if sourceAppPath.isEmpty {
+                            pickSourceApp()
+                        } else {
+                            showClonePanel = true
+                        }
+                    }
+                    .buttonStyle(DualPrimaryButtonStyle(palette: palette))
+                    .disabled(isProcessing)
+
+                    Button(localized("drop.supportsAnyApp")) {
+                        showToast(localized("toast.supportsAnyApp"))
+                    }
+                    .buttonStyle(DualTextButtonStyle(palette: palette))
+                }
+                .padding(.top, 20)
+            }
+
+            Spacer(minLength: 16)
+
+            appStack
+        }
+        .padding(.horizontal, 34)
+        .padding(.vertical, 32)
+        .frame(maxWidth: .infinity, minHeight: 220)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(cardBackground)
+            RoundedRectangle(cornerRadius: DualPalette.radius, style: .continuous)
+                .fill(palette.surface)
+                .overlay(alignment: .topTrailing) {
+                    // The soft halo from the design, clipped by the card itself.
+                    Circle()
+                        .fill(palette.accent.opacity(0.07))
+                        .frame(width: 320, height: 320)
+                        .offset(x: 120, y: -160)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: DualPalette.radius, style: .continuous))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(cardStroke, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DualPalette.radius, style: .continuous)
+                .stroke(isDropTargeted ? palette.accent : palette.accent.opacity(0.18), lineWidth: isDropTargeted ? 2 : 1)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: DualPalette.radius, style: .continuous)
+                .stroke(palette.accentSoft, lineWidth: isDropTargeted ? 4 : 0)
+                .padding(-3)
+        )
+        .shadow(color: palette.cardShadow, radius: 26, x: 0, y: 9)
+        .scaleEffect(isDropTargeted ? 0.995 : 1)
+        .animation(motion(DualMotion.standard), value: isDropTargeted)
+        .onHover { hovering in
+            withAnimation(motion(DualMotion.playful)) {
+                isDropZoneHovered = hovering
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
     }
 
-    private func bottomActionSurface<Content: View>(
-        fill: Color,
-        stroke: Color,
-        @ViewBuilder content: () -> Content
+    /// A fan of the three apps on this Mac most likely to be cloned. Each icon is
+    /// a shortcut: clicking one picks it as the source app.
+    private var appStack: some View {
+        let lifted = isDropZoneHovered || isDropTargeted
+        let apps = Array(suggestedApps.prefix(3))
+
+        return ZStack {
+            if apps.isEmpty {
+                genericMark
+            } else {
+                let hoveredIndex = apps.firstIndex { $0.id == hoveredSuggestionID }
+                ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
+                    suggestionMark(
+                        app,
+                        index: index,
+                        count: apps.count,
+                        hoveredIndex: hoveredIndex,
+                        lifted: lifted
+                    )
+                }
+            }
+        }
+        .frame(width: 244, height: 150)
+    }
+
+    private static let appMarkSize: CGFloat = 96
+
+    private func suggestionMark(
+        _ app: SuggestedApp,
+        index: Int,
+        count: Int,
+        hoveredIndex: Int?,
+        lifted: Bool
     ) -> some View {
-        content()
-            .modifier(BottomActionSurfaceStyle(fill: fill, stroke: stroke))
-    }
+        // A straight deck: every icon stands upright on the same baseline and the
+        // stack recedes to the right. Rotation is deliberately avoided — macOS icons
+        // carry their own shape and shadow, and tilting them reads as stickers.
+        let size = Self.appMarkSize
+        let depth = CGFloat(index)
+        let isHovered = hoveredSuggestionID == app.id
+        // Icons overlap by less than half, so the center of every icon stays
+        // clear of the hit area of the one in front of it.
+        let step: CGFloat = lifted ? 64 : 58
+        let scale = 1 - depth * 0.11
+        // Icons behind the one being reached for slide back to open a gap.
+        let yield: CGFloat = hoveredIndex.map { index > $0 ? 9 : 0 } ?? 0
+        let centering = -CGFloat(count - 1) * step / 2
 
-    private func cardView<Content: View>(shadow: Bool = false, @ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(cardBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(cardStroke, lineWidth: 1)
-            )
-            .shadow(color: shadow ? Color.black.opacity(0.08) : .clear, radius: 18, x: 0, y: 8)
-    }
-
-    private func secondaryButton(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(secondaryButtonText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .allowsTightening(true)
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        return Button {
+            applySourceApp(url: URL(fileURLWithPath: app.path))
+        } label: {
+            // The hit area is this fixed rectangle. Every hover response lives in
+            // the overlay, which is excluded from hit testing — otherwise the icon
+            // moves out from under the pointer that just picked it up and the
+            // hover state oscillates.
+            Color.clear
+                .frame(width: size, height: size)
+                .overlay(
+                    Image(nsImage: app.icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: size, height: size)
+                        .shadow(
+                            color: palette.cardShadow,
+                            radius: isHovered ? 24 : 16 - depth * 3,
+                            x: 0,
+                            y: isHovered ? 14 : 9 - depth * 2
+                        )
+                        .scaleEffect(isHovered ? 1.06 : 1, anchor: .bottom)
+                        .offset(x: yield, y: isHovered ? -8 : 0)
+                        .animation(motion(DualMotion.standard), value: isHovered)
+                        .animation(motion(DualMotion.standard), value: yield)
+                        .allowsHitTesting(false)
+                )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(inputBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(inputStroke, lineWidth: 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .disabled(isProcessing)
+        .help(localized("quickPick.add", app.name))
+        // Scaling from the bottom keeps the whole deck on one baseline.
+        .scaleEffect(scale, anchor: .bottom)
+        .opacity(1 - depth * 0.13)
+        .offset(x: centering + depth * step)
+        .zIndex(isHovered ? Double(count) + 1 : Double(count - index))
+        .onHover { hovering in
+            guard !isProcessing else { return }
+            hoveredSuggestionID = hovering ? app.id : (hoveredSuggestionID == app.id ? nil : hoveredSuggestionID)
+        }
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-            .lineLimit(1)
+    /// Shown only when this Mac has no third-party app to suggest.
+    private var genericMark: some View {
+        let size = Self.appMarkSize
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .fill(palette.accent)
+            Text("A²")
+                .font(.system(size: size * 0.4, weight: .bold))
+                .tracking(-1.8)
+                .foregroundColor(.white)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: palette.cardShadow, radius: 18, x: 0, y: 10)
     }
 
-    private var dropArea: some View {
-        Group {
-            if showingLog {
-                logPanel
-            } else {
-                VStack(spacing: 14) {
-                    ZStack {
-                        if let appIcon {
-                            Image(nsImage: appIcon)
-                                .resizable()
-                                .interpolation(.high)
-                                .scaledToFit()
-                                .frame(width: 96, height: 96)
-                                .scaleEffect(iconScale)
-                                .shadow(color: .black.opacity(0.15), radius: 18, x: 0, y: 8)
-                        } else {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 34, weight: .semibold))
-                                .foregroundStyle(Color.primary.opacity(isDropTargeted ? 0.8 : 0.4))
-                                .scaleEffect(isDropTargeted ? 1.15 : 1.0)
-                                .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isDropTargeted)
+    // MARK: - Clone list
+
+    private var cloneRecordsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 16) {
+                Text(localized("clones.title"))
+                    .font(.system(size: 15, weight: .bold))
+                    .tracking(-0.2)
+
+                Text(localized("workspace.count", cloneRecords.count))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundColor(palette.muted)
+
+                Spacer(minLength: 8)
+
+                Text(localized("clones.rowHint"))
+                    .font(.system(size: 11))
+                    .foregroundColor(palette.muted)
+
+                Button(localized("clones.import")) {
+                    importExistingClone()
+                }
+                .buttonStyle(DualTextButtonStyle(palette: palette))
+                .disabled(isProcessing)
+            }
+            .padding(.horizontal, 2)
+
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 0) {
+                    if cloneRecords.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundColor(palette.muted.opacity(0.7))
+                            Text(localized("clones.empty.title"))
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(localized("clones.empty.subtitle"))
+                                .font(.system(size: 11))
+                                .foregroundColor(palette.muted)
                         }
-                    }
-
-                    VStack(spacing: 6) {
-                        Text(sourceAppPath.isEmpty ? localized("drop.title.empty") : localized("status.sourceAppSelected"))
-                            .font(.system(size: 19, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.primary.opacity(0.88))
-                        Text(sourceAppPath.isEmpty ? localized("drop.subtitle.empty") : localized("drop.subtitle.selected"))
-                            .font(.system(size: 11.5, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.9)
-
-                        if sourceAppPath.isEmpty {
-                            if !suggestedApps.isEmpty {
-                                VStack(spacing: 8) {
-                                    Text(localized("drop.quickPick"))
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.tertiary)
-                                        .padding(.top, 8)
-
-                                    HStack(spacing: 12) {
-                                        ForEach(suggestedApps) { app in
-                                            Button {
-                                                applySourceApp(url: URL(fileURLWithPath: app.path))
-                                            } label: {
-                                                VStack(spacing: 5) {
-                                                    Image(nsImage: app.icon)
-                                                        .resizable()
-                                                        .interpolation(.high)
-                                                        .scaledToFit()
-                                                        .frame(width: 38, height: 38)
-                                                    Text(app.name)
-                                                        .font(.system(size: 10.5))
-                                                        .foregroundStyle(.secondary)
-                                                        .lineLimit(1)
-                                                        .frame(width: 60)
-                                                }
-                                                .contentShape(Rectangle())
-                                            }
-                                            .buttonStyle(.plain)
-                                            .focusable(false)
-                                        }
-                                    }
-                                }
-                            } else {
-                                Text(localized("drop.supportsAnyApp"))
-                                    .font(.system(size: 12.5, weight: .regular))
-                                    .foregroundStyle(Color.secondary.opacity(0.9))
-                                    .padding(.top, 8)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 30)
+                    } else {
+                        ForEach(Array(cloneRecords.enumerated()), id: \.element.id) { index, record in
+                            cloneRecordRow(record)
+                            if index < cloneRecords.count - 1 {
+                                Rectangle()
+                                    .fill(palette.line)
+                                    .frame(height: 1)
+                                    .padding(.leading, 71)
                             }
-                        } else {
-                            Text(sourceAppPath)
-                                .font(.system(size: 13, weight: .regular, design: .monospaced))
-                                .foregroundStyle(Color.secondary.opacity(0.92))
-                                .lineLimit(2)
-                                .multilineTextAlignment(.center)
-                                .padding(.top, 8)
-                                .frame(maxWidth: 420)
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(isDropTargeted ? Color(red: 0.52, green: 0.68, blue: 0.95).opacity(0.06) : Color.clear)
-                        .padding(12)
-                        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(
-                            isDropTargeted ? Color(red: 0.52, green: 0.68, blue: 0.95).opacity(0.9) : Color.clear,
-                            style: StrokeStyle(lineWidth: 1.5, dash: [8, 6])
-                        )
-                        .padding(12)
-                        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
-                )
-                .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
+                .background(ScrollerStyle(isDark: isDark))
+            }
+            .frame(minHeight: 140, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: DualPalette.radius, style: .continuous))
+            .dualCard(palette, shadowRadius: 14, shadowY: 5)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func cloneRecordRow(_ record: CloneRecord) -> some View {
+        let cloneExists = FileManager.default.fileExists(atPath: record.destinationAppPath)
+        let isHovered = hoveredRecordID == record.id
+
+        return HStack(spacing: 13) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: record.destinationAppPath))
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(record.cloneName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(localized("clones.source", URL(fileURLWithPath: record.sourceAppPath).lastPathComponent, record.bundleIdentifier))
+                    .font(.system(size: 11))
+                    .foregroundColor(palette.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 18)
+
+            Text(appVersion(for: record.destinationAppPath) ?? "—")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundColor(palette.muted)
+
+            cloneRecordStatus(record)
+                .frame(minWidth: 62, alignment: .trailing)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 70)
+        .background(isHovered && cloneExists ? palette.surfaceHover : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard cloneExists else { return }
+            revealInFinder(path: record.destinationAppPath)
+        }
+        .onHover { hovering in
+            hoveredRecordID = hovering ? record.id : (hoveredRecordID == record.id ? nil : hoveredRecordID)
+            if hovering && cloneExists {
+                NSCursor.pointingHand.push()
+            } else if cloneExists {
+                NSCursor.pop()
             }
         }
+        .animation(DualMotion.hover, value: isHovered)
+        .help(cloneExists ? localized("action.revealInFinder") : "")
     }
+
+    @ViewBuilder
+    private func cloneRecordStatus(_ record: CloneRecord) -> some View {
+        switch status(of: record) {
+        case .sourceMissing:
+            Text(localized("clones.sourceMissing"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.orange)
+        case .needsUpdate:
+            Button(localized("clones.update")) {
+                updateClone(record)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(palette.accent)
+            .disabled(isProcessing)
+            .help(localized("clones.update"))
+        case .upToDate:
+            Text(localized("clones.current"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(palette.success)
+        }
+    }
+
+    // MARK: - Clone sheet
+
+    private var cloneSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 16) {
+                Text(localized("clonePanel.title"))
+                    .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.5)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    showClonePanel = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(palette.muted)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(palette.surfaceSoft))
+                }
+                .buttonStyle(.plain)
+                .disabled(isProcessing)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
+
+            VStack(alignment: .leading, spacing: 12) {
+                if let appIcon {
+                    HStack(spacing: 12) {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 36, height: 36)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(URL(fileURLWithPath: sourceAppPath).deletingPathExtension().lastPathComponent)
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(sourceAppPath)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(palette.muted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer(minLength: 8)
+                        Button(localized("common.change")) {
+                            pickSourceApp()
+                        }
+                        .buttonStyle(DualTextButtonStyle(palette: palette))
+                        .disabled(isProcessing)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(palette.surfaceSoft)
+                    )
+                }
+
+                labeledField(localized("field.cloneDisplayName"), text: $cloneName)
+                labeledField(localized("field.bundleIdentifier"), text: $bundleIdentifier)
+                labeledField(
+                    localized("field.destinationDirectory"),
+                    text: $destinationDirectory,
+                    help: localized("field.destinationDirectory.help"),
+                    accessory: localized("action.chooseDestinationDirectory"),
+                    accessoryAction: pickDestinationDirectory
+                )
+
+                VStack(spacing: 0) {
+                    settingToggleRow(
+                        localized("setting.addCloneBadge"),
+                        detail: localized("setting.addCloneBadge.help"),
+                        isOn: $addCloneBadge
+                    )
+                    Rectangle()
+                        .fill(palette.line)
+                        .frame(height: 1)
+                    settingToggleRow(
+                        localized("setting.clearCloneData"),
+                        detail: localized("setting.clearCloneData.help"),
+                        isOn: $clearDataBeforeClone
+                    )
+                }
+                .padding(.top, 4)
+
+                riskConsentCard
+
+                if !errorText.isEmpty {
+                    Label(errorText, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 4)
+
+            HStack(spacing: 8) {
+                Spacer()
+
+                Button(localized("common.cancel")) {
+                    showClonePanel = false
+                }
+                .buttonStyle(DualSecondaryButtonStyle(palette: palette))
+                .disabled(isProcessing)
+
+                Button {
+                    runCloneFlow()
+                } label: {
+                    HStack(spacing: 7) {
+                        if isProcessing {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.7)
+                        }
+                        Text(primaryActionTitle)
+                    }
+                    .frame(minWidth: 96)
+                }
+                .buttonStyle(DualPrimaryButtonStyle(palette: palette))
+                .keyboardShortcut(.defaultAction)
+                .disabled(isProcessing || !riskAccepted)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 24)
+        }
+        .background(palette.canvas)
+        .onAppear {
+            // Consent is per clone, never remembered across runs.
+            riskAccepted = false
+        }
+    }
+
+    private var riskConsentCard: some View {
+        Button {
+            withAnimation(motion(DualMotion.standard)) {
+                riskAccepted.toggle()
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: riskAccepted ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(riskAccepted ? palette.accent : palette.warningInk.opacity(0.55))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(localized("risk.confirm.title"))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(localized("disclaimer.risk"))
+                        .font(.system(size: 11))
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(palette.warningInk)
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: DualPalette.controlRadius, style: .continuous)
+                    .fill(palette.warningSurface)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessing)
+        .accessibilityAddTraits(riskAccepted ? .isSelected : [])
+    }
+
+    // MARK: - Log panel
 
     private var logPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header with app info
             HStack(spacing: 10) {
                 if let appIcon {
                     Image(nsImage: appIcon)
                         .resizable()
+                        .interpolation(.high)
                         .scaledToFit()
                         .frame(width: 28, height: 28)
                 }
@@ -642,39 +955,38 @@ struct ContentView: View {
                     Text(cloneName.isEmpty ? localized("log.title") : cloneName)
                         .font(.system(size: 13.5, weight: .semibold))
                     Text(localized("log.subtitle"))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundColor(palette.muted)
                 }
                 Spacer()
-                if !isProcessing {
+                if isProcessing {
+                    Button {
+                        withAnimation(motion(DualMotion.standard)) {
+                            showingLog = false
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(palette.muted)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(palette.surfaceSoft))
+                    }
+                    .buttonStyle(.plain)
+                    .help(localized("log.status.processing"))
+                } else if cloneSuccess {
+                    Button(localized("action.backHome")) {
+                        returnToHome()
+                    }
+                    .buttonStyle(DualPrimaryButtonStyle(palette: palette))
+                } else {
                     Button {
                         returnToHome()
                     } label: {
-                        if cloneSuccess {
-                            HStack(spacing: 6) {
-                                Image(systemName: "house.fill")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text(localized("action.backHome"))
-                                    .font(.system(size: 11.5, weight: .semibold))
-                            }
-                            .foregroundStyle(Color.white.opacity(0.96))
-                            .padding(.horizontal, 12)
-                            .frame(height: 28)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.92))
-                            )
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                            )
-                        } else {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 22, height: 22)
-                                .background(Circle().fill(Color.primary.opacity(0.06)))
-                        }
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(palette.muted)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(palette.surfaceSoft))
                     }
                     .buttonStyle(.plain)
                 }
@@ -691,9 +1003,9 @@ struct ContentView: View {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.4),
-                                    Color(red: 0.2, green: 0.45, blue: 0.95),
-                                    Color(red: 0.2, green: 0.45, blue: 0.95).opacity(0.4)
+                                    palette.accent.opacity(0.4),
+                                    palette.accent,
+                                    palette.accent.opacity(0.4)
                                 ],
                                 startPoint: .leading,
                                 endPoint: .trailing
@@ -708,6 +1020,7 @@ struct ContentView: View {
                 .padding(.bottom, 6)
                 .onAppear {
                     progressPhase = 0
+                    guard !reduceMotion else { return }
                     withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                         progressPhase = 1.0
                     }
@@ -717,27 +1030,33 @@ struct ContentView: View {
                 }
             }
 
-            Divider().padding(.horizontal, 20)
+            Rectangle()
+                .fill(palette.line)
+                .frame(height: 1)
+                .padding(.horizontal, 20)
 
-            // Log content
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(logText.isEmpty ? localized("log.waiting") : logText)
                         .font(.system(size: 11.5, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
-                        .foregroundStyle(Color.primary.opacity(0.65))
+                        .foregroundColor(Color.primary.opacity(0.65))
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
                         .id("logEnd")
+                        .background(ScrollerStyle(isDark: isDark))
                 }
                 .onChange(of: logText) { _ in
                     proxy.scrollTo("logEnd", anchor: .bottom)
                 }
             }
 
-            // Status bar
-            Divider().padding(.horizontal, 20)
+            Rectangle()
+                .fill(palette.line)
+                .frame(height: 1)
+                .padding(.horizontal, 20)
+
             HStack(spacing: 6) {
                 if isProcessing {
                     ProgressView()
@@ -745,29 +1064,28 @@ struct ContentView: View {
                         .scaleEffect(0.7)
                     Text(localized("log.status.processing"))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(palette.muted)
                 } else if cloneSuccess {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color(red: 0.18, green: 0.72, blue: 0.42))
+                        .foregroundColor(palette.success)
                         .font(.system(size: 11))
                     Text(localized("log.status.success"))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 0.18, green: 0.72, blue: 0.42))
+                        .foregroundColor(palette.success)
                     if !lastOutputPath.isEmpty {
                         Spacer()
                         Button(localized("action.revealInFinder")) {
                             revealInFinder(path: lastOutputPath)
                         }
-                        .font(.system(size: 10.5, weight: .medium))
-                        .buttonStyle(.link)
+                        .buttonStyle(DualTextButtonStyle(palette: palette))
                     }
                 } else if !errorText.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundColor(.red)
                         .font(.system(size: 11))
                     Text(errorText)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.red)
                         .lineLimit(2)
                 }
                 Spacer()
@@ -776,63 +1094,90 @@ struct ContentView: View {
             .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .dualCard(palette, radius: DualPalette.radius, shadowRadius: 24, shadowY: 10)
     }
 
-    private func labeledField(_ label: String, text: Binding<String>) -> some View {
+    // MARK: - Controls
+
+    private func labeledField(
+        _ label: String,
+        text: Binding<String>,
+        help: String? = nil,
+        accessory: String? = nil,
+        accessoryAction: (() -> Void)? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.primary.opacity(0.5))
-                .lineLimit(1)
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.primary.opacity(0.62))
+                    .lineLimit(1)
+
+                if let accessory, let accessoryAction {
+                    Spacer(minLength: 4)
+                    Button(accessory, action: accessoryAction)
+                        .buttonStyle(DualTextButtonStyle(palette: palette))
+                        .disabled(isProcessing)
+                }
+            }
+
             FocuslessTextField(text: text)
-                .font(.system(size: 12.5, weight: .regular, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(height: 32)
-                .background(inputBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(inputStroke, lineWidth: 1)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: DualPalette.controlRadius, style: .continuous)
+                        .fill(palette.surfaceSoft)
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DualPalette.controlRadius, style: .continuous)
+                        .stroke(palette.line, lineWidth: 1)
+                )
+
+            if let help {
+                Text(help)
+                    .font(.system(size: 11))
+                    .foregroundColor(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
-    private func readOnlyField(_ label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.primary.opacity(0.82))
-            Text(value)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .font(.system(size: 13.5, weight: .regular, design: .monospaced))
-                .background(inputBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(inputStroke, lineWidth: 1)
-                )
-                .textSelection(.enabled)
+    private func settingToggleRow(_ label: String, detail: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(palette.muted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .toggleStyle(.switch)
+        .tint(palette.accent)
+        .padding(.vertical, 10)
+        .disabled(isProcessing)
     }
 
-    private func settingToggleRow(_ label: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(Color.primary.opacity(0.84))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .lineLimit(2)
-                .minimumScaleFactor(0.9)
-            Spacer()
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
+    // MARK: - Feedback
+
+    private func motion(_ animation: Animation) -> Animation {
+        DualMotion.resolved(animation, reduceMotion: reduceMotion)
+    }
+
+    private func showToast(_ message: String) {
+        toastDismissTask?.cancel()
+        withAnimation(motion(DualMotion.standard)) {
+            toast = DualToast(message: message)
         }
-        .padding(.top, 2)
+        toastDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(motion(DualMotion.standard)) {
+                toast = nil
+            }
+        }
     }
 
     private func pickSourceApp() {
@@ -845,6 +1190,78 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             applySourceApp(url: url)
         }
+    }
+
+    private func importExistingClone() {
+        let clonePanel = NSOpenPanel()
+        clonePanel.allowedContentTypes = [.application]
+        clonePanel.allowsMultipleSelection = false
+        clonePanel.canChooseDirectories = false
+        clonePanel.canChooseFiles = true
+        clonePanel.prompt = localized("clones.import")
+        clonePanel.message = localized("clones.importClone.message")
+
+        guard clonePanel.runModal() == .OK, let cloneURL = clonePanel.url else {
+            return
+        }
+
+        let clonePlist = applicationInfoPlist(at: cloneURL)
+        if
+            let sourcePath = clonePlist?["DualSourceApplicationPath"] as? String,
+            FileManager.default.fileExists(atPath: sourcePath)
+        {
+            persistImportedClone(cloneURL: cloneURL, sourceURL: URL(fileURLWithPath: sourcePath))
+            return
+        }
+
+        let sourcePanel = NSOpenPanel()
+        sourcePanel.allowedContentTypes = [.application]
+        sourcePanel.allowsMultipleSelection = false
+        sourcePanel.canChooseDirectories = false
+        sourcePanel.canChooseFiles = true
+        sourcePanel.prompt = localized("clones.importSource.prompt")
+        sourcePanel.message = localized("clones.importSource.message")
+
+        guard sourcePanel.runModal() == .OK, let sourceURL = sourcePanel.url else {
+            return
+        }
+        persistImportedClone(cloneURL: cloneURL, sourceURL: sourceURL)
+    }
+
+    private func persistImportedClone(cloneURL: URL, sourceURL: URL) {
+        guard
+            cloneURL.standardizedFileURL != sourceURL.standardizedFileURL,
+            let plist = applicationInfoPlist(at: cloneURL),
+            let bundleIdentifier = plist["CFBundleIdentifier"] as? String
+        else {
+            errorText = localized("clones.importInvalid")
+            return
+        }
+
+        let record = CloneRecord(
+            sourceAppPath: sourceURL.path,
+            destinationAppPath: cloneURL.path,
+            cloneName: (plist["CFBundleDisplayName"] as? String)
+                ?? (plist["CFBundleName"] as? String)
+                ?? cloneURL.deletingPathExtension().lastPathComponent,
+            bundleIdentifier: bundleIdentifier,
+            addCloneBadge: plist["DualCloneBadgeEnabled"] as? Bool ?? false,
+            updatedAt: Date()
+        )
+        cloneRecords.removeAll { $0.destinationAppPath == record.destinationAppPath }
+        cloneRecords.insert(record, at: 0)
+        if let data = try? JSONEncoder().encode(cloneRecords) {
+            UserDefaults.standard.set(data, forKey: Self.cloneRecordsKey)
+        }
+        errorText = ""
+    }
+
+    private func applicationInfoPlist(at appURL: URL) -> [String: Any]? {
+        let url = appURL.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
     }
 
     private func pickDestinationDirectory() {
@@ -863,6 +1280,7 @@ struct ContentView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard !isProcessing else { return false }
         guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
             return false
         }
@@ -905,12 +1323,7 @@ struct ContentView: View {
         bundleIdentifier = "com.dual.\(name.lowercased())2"
         cloneSuccess = false
         refreshAppIcon(for: url)
-
-        // Spring bounce on icon appearance
-        iconScale = 0.5
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
-            iconScale = 1.0
-        }
+        showClonePanel = true
     }
 
     private func returnToHome() {
@@ -1023,10 +1436,118 @@ struct ContentView: View {
         return plist["CFBundleIdentifier"] as? String
     }
 
+    private func appVersion(for appPath: String) -> String? {
+        let infoPlist = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
+        guard
+            let data = try? Data(contentsOf: infoPlist),
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        else {
+            return nil
+        }
+        return plist["CFBundleShortVersionString"] as? String ?? plist["CFBundleVersion"] as? String
+    }
+
+    private func appVersionFingerprint(for appPath: String) -> String? {
+        let infoPlist = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
+        guard
+            let data = try? Data(contentsOf: infoPlist),
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        else {
+            return nil
+        }
+        return [
+            plist["CFBundleShortVersionString"] as? String,
+            plist["CFBundleVersion"] as? String
+        ]
+        .compactMap { $0 }
+        .joined(separator: ":")
+    }
+
+    private func loadCloneRecords() -> [CloneRecord] {
+        let storedRecords: [CloneRecord]
+        if
+            let data = UserDefaults.standard.data(forKey: Self.cloneRecordsKey),
+            let decoded = try? JSONDecoder().decode([CloneRecord].self, from: data)
+        {
+            storedRecords = decoded
+        } else {
+            storedRecords = []
+        }
+
+        var recordsByPath = Dictionary(
+            uniqueKeysWithValues: discoverCloneRecords().map { ($0.destinationAppPath, $0) }
+        )
+        for record in storedRecords where FileManager.default.fileExists(atPath: record.destinationAppPath) {
+            recordsByPath[record.destinationAppPath] = record
+        }
+        return recordsByPath.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func discoverCloneRecords() -> [CloneRecord] {
+        let roots = [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true)
+        ]
+        let fileManager = FileManager.default
+        var records: [CloneRecord] = []
+
+        for root in roots {
+            guard let apps = try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for app in apps where app.pathExtension.lowercased() == "app" {
+                let infoPlist = app.appendingPathComponent("Contents/Info.plist")
+                guard
+                    let data = try? Data(contentsOf: infoPlist),
+                    let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+                    let sourceAppPath = plist["DualSourceApplicationPath"] as? String,
+                    let bundleIdentifier = plist["CFBundleIdentifier"] as? String
+                else {
+                    continue
+                }
+
+                records.append(CloneRecord(
+                    sourceAppPath: sourceAppPath,
+                    destinationAppPath: app.path,
+                    cloneName: (plist["CFBundleDisplayName"] as? String)
+                        ?? (plist["CFBundleName"] as? String)
+                        ?? app.deletingPathExtension().lastPathComponent,
+                    bundleIdentifier: bundleIdentifier,
+                    addCloneBadge: plist["DualCloneBadgeEnabled"] as? Bool ?? false,
+                    updatedAt: (try? app.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                ))
+            }
+        }
+        return records
+    }
+
+    private func persistCloneRecord(request: CloneRequest, destinationAppPath: String) {
+        let record = CloneRecord(
+            sourceAppPath: request.sourceAppPath,
+            destinationAppPath: destinationAppPath,
+            cloneName: request.cloneName,
+            bundleIdentifier: request.bundleIdentifier,
+            addCloneBadge: request.addCloneBadge,
+            updatedAt: Date()
+        )
+        cloneRecords.removeAll { $0.destinationAppPath == destinationAppPath }
+        cloneRecords.insert(record, at: 0)
+        if let data = try? JSONEncoder().encode(cloneRecords) {
+            UserDefaults.standard.set(data, forKey: Self.cloneRecordsKey)
+        }
+        // The first successful clone retires the onboarding copy for good.
+        hasSeenWelcome = true
+    }
+
     private func resolvedDestinationDirectory(input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return "/Applications"
+            return Self.defaultDestinationDirectory
         }
         return (trimmed as NSString).expandingTildeInPath
     }
@@ -1056,18 +1577,25 @@ struct ContentView: View {
             return
         }
 
+        startCloneRequest(request)
+    }
+
+    private func startCloneRequest(_ request: CloneRequest) {
         let writableDirectory = resolvedDestinationDirectory(input: request.destinationDirectory)
+        let normalizedRequest = CloneRequest(
+            sourceAppPath: request.sourceAppPath,
+            cloneName: request.cloneName,
+            bundleIdentifier: request.bundleIdentifier,
+            destinationDirectory: writableDirectory,
+            clearDataBeforeClone: request.clearDataBeforeClone,
+            addCloneBadge: request.addCloneBadge
+        )
+
         if !ensureWritableDirectory(writableDirectory) {
             if isSystemApplicationsDirectory(writableDirectory) {
                 appendLog(localized("log.directoryNotWritable", writableDirectory))
                 appendLog(localized("log.waitingForAdmin"))
-                pendingAdminRequest = CloneRequest(
-                    sourceAppPath: request.sourceAppPath,
-                    cloneName: request.cloneName,
-                    bundleIdentifier: request.bundleIdentifier,
-                    destinationDirectory: writableDirectory,
-                    clearDataBeforeClone: request.clearDataBeforeClone
-                )
+                pendingAdminRequest = normalizedRequest
                 showAdminPrivilegeAlert = true
                 return
             }
@@ -1075,13 +1603,28 @@ struct ContentView: View {
             return
         }
 
-        runClone(request: CloneRequest(
-            sourceAppPath: request.sourceAppPath,
-            cloneName: request.cloneName,
-            bundleIdentifier: request.bundleIdentifier,
-            destinationDirectory: writableDirectory,
-            clearDataBeforeClone: request.clearDataBeforeClone
-        ), useAdminPrivileges: false)
+        runClone(request: normalizedRequest, useAdminPrivileges: false)
+    }
+
+    private func updateClone(_ record: CloneRecord) {
+        errorText = ""
+        logText = ""
+        logQueue.removeAll()
+        logTypingTask?.cancel()
+        logTypingTask = nil
+        cloneSuccess = false
+        cloneName = record.cloneName
+        sourceAppPath = record.sourceAppPath
+        appIcon = NSWorkspace.shared.icon(forFile: record.destinationAppPath)
+
+        startCloneRequest(CloneRequest(
+            sourceAppPath: record.sourceAppPath,
+            cloneName: record.cloneName,
+            bundleIdentifier: record.bundleIdentifier,
+            destinationDirectory: URL(fileURLWithPath: record.destinationAppPath).deletingLastPathComponent().path,
+            clearDataBeforeClone: false,
+            addCloneBadge: record.addCloneBadge
+        ))
     }
 
     private func buildCloneRequest() -> CloneRequest? {
@@ -1114,7 +1657,8 @@ struct ContentView: View {
             cloneName: trimmedCloneName,
             bundleIdentifier: trimmedBundleID,
             destinationDirectory: destinationDirectory,
-            clearDataBeforeClone: clearDataBeforeClone
+            clearDataBeforeClone: clearDataBeforeClone,
+            addCloneBadge: addCloneBadge
         )
     }
 
@@ -1131,6 +1675,7 @@ struct ContentView: View {
             .appendingPathComponent("\(request.cloneName).app")
 
         isProcessing = true
+        showClonePanel = false
 
         withAnimation(.easeInOut(duration: 0.2)) {
             showingLog = true
@@ -1144,6 +1689,7 @@ struct ContentView: View {
                     bundleIdentifier: request.bundleIdentifier,
                     bundleName: request.cloneName,
                     clearDataBeforeClone: request.clearDataBeforeClone,
+                    addCloneBadge: request.addCloneBadge,
                     useAdminPrivileges: useAdminPrivileges,
                     localeIdentifier: nil,
                     logger: { line in
@@ -1156,6 +1702,7 @@ struct ContentView: View {
                 await MainActor.run {
                     appendLog(localized("log.finished", destinationURL.path))
                     lastOutputPath = destinationURL.path
+                    persistCloneRecord(request: request, destinationAppPath: destinationURL.path)
                     isProcessing = false
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                         cloneSuccess = true

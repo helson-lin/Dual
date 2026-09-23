@@ -1,0 +1,54 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+Copyright (C) 2007 Free Software Foundation, Inc.
+
+This project is licensed under the GNU General Public License v3.0, with the
+following additional terms under Section 7 of the GPLv3. The complete GPLv3
+text is available at:
+https://www.gnu.org/licenses/gpl-3.0.txt
+
+Additional Terms | 附加条款
+
+1. COPYLEFT REQUIREMENT
+
+Any derivative work, modification, or project that incorporates any portion of
+this Software's source code MUST be released under the GNU GPLv3 with these
+same additional terms. The original copyright notices, this license, and all
+attribution notices must be retained.
+
+任何衍生作品、修改版本或使用本软件部分源代码的项目，必须以 GNU GPLv3
+及本附加条款发布。原有版权声明、本许可证和署名信息必须保留。
+
+2. NON-COMMERCIAL USE ONLY
+
+Without explicit prior written permission from the copyright holder, this
+Software and any derivative work may be used, copied, modified, and shared only
+for personal, non-commercial purposes. Commercial use is prohibited, including
+selling, sublicensing, renting, leasing, providing a paid service, commercial
+distribution, or incorporating the Software into a commercial product.
+
+未经版权所有者事先明确书面许可，本软件及任何衍生作品仅可用于个人、非商业
+目的的使用、复制、修改和分享。商业使用被禁止，包括销售、再授权、出租、
+租赁、提供付费服务、商业分发，或将本软件纳入商业产品。
+
+3. WRITTEN COMMERCIAL PERMISSION
+
+The copyright holder may grant separate written permission for commercial use.
+Such permission may include conditions, fees, or a different license.
+
+版权所有者可以通过单独的书面许可授权商业使用。该许可可以包含附加条件、
+费用或采用不同的许可证。
+
+4. WARRANTY DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Copyright (c) 2024-2026 Jarin He. All Rights Reserved.
+Copyright (c) 2026 helson-lin.

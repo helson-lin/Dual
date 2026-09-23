@@ -77,17 +77,6 @@ cask "dual" do
 
   app "Dual.app"
 
-  caveats do
-    <<~EOS
-      Dual is currently distributed as an unsigned, unnotarized test build.
-
-      If macOS blocks the app after installation, remove the quarantine flag:
-        xattr -cr /Applications/Dual.app
-
-      If the app still cannot be opened, apply a local ad-hoc signature:
-        codesign --force --deep --sign - /Applications/Dual.app
-    EOS
-  end
 end
 EOF
 

@@ -36,6 +36,54 @@ jobs:
           "$PWD/.build/dmg-python-venv/bin/python" -m pip install --upgrade pip
           "$PWD/.build/dmg-python-venv/bin/python" -m pip install dmgbuild
           "$PWD/.build/dmg-python-venv/bin/python" -c "import ds_store, mac_alias"
+      - name: Import signing credentials
+        env:
+          P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          for name in P12_BASE64 P12_PASSWORD API_KEY_BASE64 API_KEY_ID API_ISSUER_ID SIGNING_IDENTITY; do
+            [[ -n "${!name}" ]] || { echo "error: required signing secret for $name is missing" >&2; exit 1; }
+          done
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          P12_PATH="$RUNNER_TEMP/developer-id.p12"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+
+          printf '%s' "$P12_BASE64" | base64 -D > "$P12_PATH"
+          printf '%s' "$API_KEY_BASE64" | base64 -D > "$NOTARY_KEY_PATH"
+          chmod 600 "$P12_PATH" "$NOTARY_KEY_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          # A fresh keychain has no Apple intermediates, so a leaf-only p12
+          # import can fail chain validation and vanish from `find-identity`
+          # even though the import itself reports success.
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -T /usr/bin/security
+
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH")"
+          echo "$IDENTITIES"
+          grep -F "$SIGNING_IDENTITY" <<<"$IDENTITIES" || {
+            echo "error: SIGNING_IDENTITY ($SIGNING_IDENTITY) not found among valid codesigning identities above." >&2
+            echo "error: verify the secret is the certificate's SHA-1 hash (or exact 'Developer ID Application: Name (TEAMID)' string) and that the .p12 is a genuine, non-expired Developer ID Application certificate exported from the Apple Developer portal." >&2
+            exit 1
+          }
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+
 
       - name: Build release artifact
         id: package
@@ -44,6 +92,11 @@ jobs:
           ARTIFACT_LABEL: ${{ matrix.label }}
           DEPLOYMENT_TARGET: 12.0
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          REQUIRE_SIGNING: "1"
         run: |
           chmod +x scripts/build-release.sh
           export DMGBUILD_PYTHONPATH="$("$PWD/.build/dmg-python-venv/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
@@ -64,11 +117,17 @@ jobs:
             ${{ steps.package.outputs.dmg_sha256_path }}
           if-no-files-found: error
 
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$NOTARY_KEY_PATH"
+
   release:
     name: Publish Release
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_tag != ''
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     permissions:
       contents: write
     env:
@@ -89,6 +148,47 @@ jobs:
             echo "error: required secret TOKEN is missing or unavailable in this workflow run" >&2
             exit 1
           fi
+      - name: Generate signed update feed
+        env:
+          TAG_NAME: ${{ github.event.inputs.release_tag || github.ref_name }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SPARKLE_PRIVATE_ED_KEY" ]] || { echo "error: SPARKLE_PRIVATE_ED_KEY is missing" >&2; exit 1; }
+          # `gh secret set < file` preserves the exported key file's trailing
+          # newline verbatim in the secret value; generate_appcast's base64
+          # decoder rejects that whitespace outright, so strip it here rather
+          # than relying on how the secret happens to have been set.
+          SPARKLE_PRIVATE_ED_KEY="$(printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]')"
+          # A stray trailing '%' is zsh's "no newline at end of output" marker,
+          # picked up when the key was copy-pasted from a terminal instead of
+          # piped from a file. '%' is never a valid base64 character, so
+          # trimming one unconditionally can't corrupt an already-correct key.
+          SPARKLE_PRIVATE_ED_KEY="${SPARKLE_PRIVATE_ED_KEY%\%}"
+          # One-off: persist the corrected value back to the secret so future
+          # runs don't depend on this trim. Best-effort -- TOKEN may not carry
+          # the "secrets: write" permission, in which case this is a no-op.
+          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | gh secret set SPARKLE_PRIVATE_ED_KEY --repo "$GITHUB_REPOSITORY" \
+            && echo "debug: rewrote SPARKLE_PRIVATE_ED_KEY secret without the trailing artifact" \
+            || echo "warning: could not rewrite SPARKLE_PRIVATE_ED_KEY secret (insufficient token permission?); continuing with the in-memory fix"
+          xcodebuild -resolvePackageDependencies -project Dual.xcodeproj -scheme Dual -derivedDataPath .build/DerivedData-updates
+          GENERATE_APPCAST=$(find .build/DerivedData-updates/SourcePackages/artifacts -type f -name generate_appcast -perm -111 -print -quit)
+          [[ -n "$GENERATE_APPCAST" ]] || { echo "error: Sparkle generate_appcast was not found" >&2; exit 1; }
+          mkdir updates-intel updates-apple-silicon
+          find dist -type f -name 'Dual-*-macos-intel.zip' -exec cp {} updates-intel/ \;
+          find dist -type f -name 'Dual-*-macos-apple-silicon.zip' -exec cp {} updates-apple-silicon/ \;
+          [[ "$(find updates-intel -type f -name '*.zip' | wc -l | tr -d ' ')" == "1" ]] || { echo "error: expected one Intel update archive" >&2; exit 1; }
+          [[ "$(find updates-apple-silicon -type f -name '*.zip' | wc -l | tr -d ' ')" == "1" ]] || { echo "error: expected one Apple Silicon update archive" >&2; exit 1; }
+          for label in intel apple-silicon; do
+            printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | "$GENERATE_APPCAST" \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG_NAME/" \
+              --link "https://github.com/$GITHUB_REPOSITORY" \
+              -o "appcast-${label}.xml" \
+              "updates-${label}"
+            [[ -s "appcast-${label}.xml" ]] || { echo "error: appcast-${label}.xml was not generated" >&2; exit 1; }
+          done
+
 
       - name: Publish GitHub release assets
         env:
@@ -99,6 +199,7 @@ jobs:
           find dist -type f -maxdepth 2 -print0 | while IFS= read -r -d '' file; do
             gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$file"
           done
+          gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --clobber appcast-intel.xml appcast-apple-silicon.xml
 
       - name: Sync Homebrew tap
         if: env.GH_TOKEN != ''
