@@ -18,7 +18,7 @@ Dual 会把选中的 `.app` 复制到新的目标位置，重写其显示名和 
 - 将选中的 `.app` 克隆到新位置，并赋予独立的显示名和 Bundle ID。
 - 支持将任意 `.app` 直接拖拽进窗口，也可以从 `/Applications` 和 `~/Applications` 中快速挑选常见应用。
 - 对使用 helper bundle 的应用重命名 helper，保证副本仍可正常启动。
-- 克隆过程中应用针对特定应用的兼容性修复（例如 Electron helper / 可执行文件重命名）。
+- 克隆过程中应用针对特定应用的兼容性修复，并为 Electron 副本在每次启动时指定独立用户数据目录（包括 Finder 双击启动）。
 - 可选为副本添加徽标图标，便于与原应用区分。
 - 创建新副本前清理旧的克隆数据，必要时执行更深层的隔离清理。
 - 清除失效的 quarantine 属性，并重新签名克隆出的 bundle。
@@ -82,7 +82,7 @@ brew install --cask helson-lin/tap/dual
 5. 使用 `ditto` 复制应用 bundle，若目标已存在则先删除。
 6. 重写 `Info.plist`，写入新的显示名和 Bundle ID，并安装徽标图标。
 7. 按需应用特定应用的补丁（Telegram 身份标签、Discord 用户数据路径）。
-8. 重命名 Electron helper 应用及主可执行文件，并在适用时修补 Electron ASAR fuse。
+8. 重命名 Electron helper 和主程序；为 Electron 副本安装传入独立 `--user-data-dir` 的启动器，再重新签名。
 9. 清除扩展属性，并使用 `codesign` 重新签名克隆出的 bundle。
 
 ## 开发

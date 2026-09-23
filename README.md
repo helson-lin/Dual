@@ -18,7 +18,7 @@ Dual copies a selected `.app` bundle to a new destination, rewrites its display 
 - Clone a selected `.app` bundle into a new destination with its own display name and bundle identifier.
 - Drag and drop any `.app`, or quick-pick common apps found in `/Applications` and `~/Applications`.
 - Rename helper apps for apps that ship helper bundles, so the clone stays launchable.
-- Apply app-specific compatibility fixes (for example Electron helper/executable renaming) during cloning.
+- Apply app-specific compatibility fixes and give Electron clones a separate user-data directory on every launch, including launches from Finder.
 - Optionally add a badge icon to the clone so it's visually distinguishable from the original.
 - Clear previous clone data before creating a new copy, with optional deeper isolation cleanup.
 - Remove stale quarantine attributes and re-sign the cloned bundle.
@@ -82,7 +82,7 @@ The UI is SwiftUI; the actual cloning runs through an `AppCloner` pipeline:
 5. Copy the app bundle with `ditto`, replacing any existing destination.
 6. Rewrite `Info.plist` with the new display name and bundle identifier, and install the badge icon.
 7. Apply app-specific patches (Telegram identity label, Discord user-data path) when needed.
-8. Rename Electron helper apps and the main executable, and patch the Electron ASAR fuse when applicable.
+8. Rename Electron helpers and the main executable; for Electron clones, install a launcher that passes a per-bundle-ID `--user-data-dir` before re-signing.
 9. Clear extended attributes and re-sign the cloned bundle with `codesign`.
 
 ## Development
