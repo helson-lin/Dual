@@ -1,0 +1,26 @@
+name: Debug Sparkle Key
+on:
+  workflow_dispatch: {}
+
+jobs:
+  debug:
+    runs-on: macos-15
+    steps:
+      - name: Inspect SPARKLE_PRIVATE_ED_KEY shape
+        env:
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+        run: |
+          set -euo pipefail
+          echo "private key length (raw): ${#SPARKLE_PRIVATE_ED_KEY}"
+          STRIPPED="$(printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]')"
+          echo "private key length (whitespace-stripped): ${#STRIPPED}"
+          if [[ "$STRIPPED" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
+            echo "charset: looks like base64"
+          else
+            echo "charset: NOT base64 (contains characters outside A-Za-z0-9+/=)"
+          fi
+          echo "first char: '${STRIPPED:0:1}' last char: '${STRIPPED: -1}'"
+          DECODED_LEN=$(printf '%s' "$STRIPPED" | base64 -D 2>/dev/null | wc -c | tr -d ' ' || echo "decode-failed")
+          echo "decoded byte length: $DECODED_LEN (expect 32 for a raw seed)"
+          echo "public key length: ${#SPARKLE_PUBLIC_ED_KEY}"
