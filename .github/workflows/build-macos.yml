@@ -160,6 +160,11 @@ jobs:
           # decoder rejects that whitespace outright, so strip it here rather
           # than relying on how the secret happens to have been set.
           SPARKLE_PRIVATE_ED_KEY="$(printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]')"
+          # A stray trailing '%' is zsh's "no newline at end of output" marker,
+          # picked up when the key was copy-pasted from a terminal instead of
+          # piped from a file. '%' is never a valid base64 character, so
+          # trimming one unconditionally can't corrupt an already-correct key.
+          SPARKLE_PRIVATE_ED_KEY="${SPARKLE_PRIVATE_ED_KEY%\%}"
           # Diagnostics only: shape/length/decoded byte count, never the value itself.
           echo "debug: private key length=${#SPARKLE_PRIVATE_ED_KEY} first='${SPARKLE_PRIVATE_ED_KEY:0:1}' last='${SPARKLE_PRIVATE_ED_KEY: -1}'"
           if [[ "$SPARKLE_PRIVATE_ED_KEY" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
