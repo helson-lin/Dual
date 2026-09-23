@@ -43,7 +43,17 @@ The app uses SwiftUI for the interface and an `AppCloner` pipeline behind the sc
 
 ## Build and Release
 
-The repository includes a GitHub Actions workflow that builds macOS `zip` and `dmg` artifacts for Intel and Apple Silicon, and can publish them to GitHub Releases on tagged or manually triggered runs.
+The GitHub Actions workflow signs and notarizes Intel and Apple Silicon `zip` and `dmg` artifacts before publishing them to GitHub Releases. Configure its Apple credentials interactively with:
+
+```bash
+scripts/configure-signing-secrets.sh
+```
+
+Configure Sparkle's EdDSA update keys the same way:
+
+```bash
+scripts/configure-update-secrets.sh
+```
 
 ## Install with Homebrew
 
@@ -61,42 +71,16 @@ brew uninstall --cask --force helson-lin/tap/dual
 brew install --cask helson-lin/tap/dual
 ```
 
-## Installing Test Releases
+## Distribution
 
-Current GitHub Releases are unsigned and not notarized. That means macOS Gatekeeper may show messages such as `"Dual" is damaged and can’t be opened` or block the app on first launch. This is expected for the current test distribution flow.
-
-Recommended install flow for testers:
-
-1. Install with Homebrew:
-
-```bash
-brew tap helson-lin/tap
-brew install --cask helson-lin/tap/dual
-```
-
-2. Or manually download the latest release and move `Dual.app` into `/Applications`.
-3. Remove the quarantine attribute:
-
-```bash
-xattr -cr /Applications/Dual.app
-```
-
-4. If macOS still blocks launch, apply a local ad-hoc signature:
-
-```bash
-codesign --force --deep --sign - /Applications/Dual.app
-```
-
-5. Launch the app with Finder -> right click -> `Open` on the first run if needed.
-
-Important constraints:
-
-- This is a temporary workaround for test builds only.
-- Public distribution without Apple Developer signing and notarization will remain unreliable across macOS versions.
-- Replace `/Applications/Dual.app` with your actual app path if you installed it somewhere else.
+GitHub Release and Homebrew artifacts are signed with Developer ID, notarized by Apple, and validated by Gatekeeper before publication. The release workflow fails instead of publishing when signing or notarization cannot be completed.
 
 ## Project Structure
 
 - `Dual/` - the macOS app source
 - `scripts/` - build and local maintenance scripts
 - `.github/workflows/` - GitHub Actions packaging workflow
+
+## License
+
+Dual is licensed under GNU GPLv3 with additional Commons Clause terms. Personal, non-commercial use only unless the copyright holder grants explicit written permission. Derivative works must retain the same license terms. See [LICENSE](./LICENSE) for the complete terms.

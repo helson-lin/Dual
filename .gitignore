@@ -1,3 +1,6 @@
+.DS_Store
+.codegraph
+xcuserdata/
 .build/
 .derived/
 .derived-build.log

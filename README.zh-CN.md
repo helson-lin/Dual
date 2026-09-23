@@ -42,7 +42,17 @@ Dual 是一款 macOS 多开应用，用于将应用 bundle 克隆成一个新的
 
 ## 构建与发布
 
-仓库包含 GitHub Actions 工作流，会为 Intel 和 Apple Silicon 构建 macOS 的 `zip` 和 `dmg` 产物，并在打 tag 或手动触发时发布到 GitHub Releases。
+GitHub Actions 会在发布前签名并公证 Intel 和 Apple Silicon 的 `zip` 与 `dmg` 产物，然后上传到 GitHub Releases。使用以下交互式脚本配置 Apple 凭据：
+
+```bash
+scripts/configure-signing-secrets.sh
+```
+
+在线升级使用 Sparkle 的 EdDSA 密钥，通过以下问答式脚本配置：
+
+```bash
+scripts/configure-update-secrets.sh
+```
 
 ## 使用 Homebrew 安装
 
@@ -60,42 +70,16 @@ brew uninstall --cask --force helson-lin/tap/dual
 brew install --cask helson-lin/tap/dual
 ```
 
-## 测试版安装说明
+## 分发说明
 
-当前 GitHub Releases 提供的是未正式签名、也未 notarize 的测试包。因此 macOS Gatekeeper 在首次打开时，可能会提示 `"Dual" is damaged and can’t be opened`，或者直接阻止启动。这是当前测试分发方式下的预期表现，不一定代表文件真的损坏。
-
-建议测试用户按下面的顺序安装：
-
-1. 通过 Homebrew 安装：
-
-```bash
-brew tap helson-lin/tap
-brew install --cask helson-lin/tap/dual
-```
-
-2. 或者手动下载最新 release，并将 `Dual.app` 移动到 `/Applications`。
-3. 移除 quarantine 标记：
-
-```bash
-xattr -cr /Applications/Dual.app
-```
-
-4. 如果系统仍然阻止启动，再做一次本地 ad-hoc 重签名：
-
-```bash
-codesign --force --deep --sign - /Applications/Dual.app
-```
-
-5. 如果还需要确认首次打开，请在 Finder 中对应用执行右键 `打开`。
-
-限制说明：
-
-- 这只是测试版分发的临时绕过方案。
-- 在没有 Apple Developer 正式签名和 notarization 的前提下，不同 macOS 版本上的打开体验无法保证完全一致。
-- 如果你的应用不在 `/Applications`，请把命令里的路径替换成实际安装路径。
+GitHub Release 和 Homebrew 产物均使用 Developer ID 签名、通过 Apple 公证，并在发布前完成 Gatekeeper 校验。签名或公证失败时，发布工作流会直接失败，不会上传未签名产物。
 
 ## 项目结构
 
 - `Dual/` - macOS 应用源代码
 - `scripts/` - 构建和本地维护脚本
 - `.github/workflows/` - GitHub Actions 打包工作流
+
+## 许可证
+
+Dual 采用 GNU GPLv3，并附加 Commons Clause 条款。除非版权所有者明确书面许可，否则仅限个人、非商业使用；衍生作品必须保留相同许可证条款。完整条款见 [LICENSE](./LICENSE)。
