@@ -1213,6 +1213,11 @@ struct ContentView: View {
             persistImportedClone(cloneURL: cloneURL, sourceURL: URL(fileURLWithPath: sourcePath))
             return
         }
+        if let sourceURL = matchingInstalledSource(for: cloneURL, plist: clonePlist) {
+            persistImportedClone(cloneURL: cloneURL, sourceURL: sourceURL)
+            return
+        }
+
 
         let sourcePanel = NSOpenPanel()
         sourcePanel.allowedContentTypes = [.application]
@@ -1226,6 +1231,40 @@ struct ContentView: View {
             return
         }
         persistImportedClone(cloneURL: cloneURL, sourceURL: sourceURL)
+    }
+
+    private func matchingInstalledSource(for cloneURL: URL, plist: [String: Any]?) -> URL? {
+        let sourceName = (plist?["DualSourceApplicationPath"] as? String)
+            .map { URL(fileURLWithPath: $0).lastPathComponent }
+        let cloneName = cloneURL.deletingPathExtension().lastPathComponent
+        let displayName = (plist?["CFBundleDisplayName"] as? String)
+            ?? (plist?["CFBundleName"] as? String)
+            ?? cloneName
+        let names = Set([
+            sourceName,
+            cloneName + ".app",
+            cloneName.hasSuffix("2") ? String(cloneName.dropLast()) + ".app" : nil,
+            displayName + ".app",
+            displayName.hasSuffix("2") ? String(displayName.dropLast()) + ".app" : nil
+        ].compactMap { $0?.lowercased() })
+        guard let apps = try? FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: "/Applications"),
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        let matches = apps.filter { app in
+            guard names.contains(app.lastPathComponent.lowercased()),
+                  app.pathExtension.lowercased() == "app",
+                  app.standardizedFileURL != cloneURL.standardizedFileURL,
+                  let sourcePlist = applicationInfoPlist(at: app),
+                  sourcePlist["DualSourceApplicationPath"] == nil,
+                  let sourceID = sourcePlist["CFBundleIdentifier"] as? String,
+                  let cloneID = plist?["CFBundleIdentifier"] as? String
+            else { return false }
+            return sourceID != cloneID
+        }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     private func persistImportedClone(cloneURL: URL, sourceURL: URL) {
