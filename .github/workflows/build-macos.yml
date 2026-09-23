@@ -155,6 +155,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$SPARKLE_PRIVATE_ED_KEY" ]] || { echo "error: SPARKLE_PRIVATE_ED_KEY is missing" >&2; exit 1; }
+          # `gh secret set < file` preserves the exported key file's trailing
+          # newline verbatim in the secret value; generate_appcast's base64
+          # decoder rejects that whitespace outright, so strip it here rather
+          # than relying on how the secret happens to have been set.
+          SPARKLE_PRIVATE_ED_KEY="$(printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]')"
           xcodebuild -resolvePackageDependencies -project Dual.xcodeproj -scheme Dual -derivedDataPath .build/DerivedData-updates
           GENERATE_APPCAST=$(find .build/DerivedData-updates/SourcePackages/artifacts -type f -name generate_appcast -perm -111 -print -quit)
           [[ -n "$GENERATE_APPCAST" ]] || { echo "error: Sparkle generate_appcast was not found" >&2; exit 1; }
