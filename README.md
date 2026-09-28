@@ -4,7 +4,7 @@
 
 Clone any macOS app into an independent copy with its own name, bundle identifier, and identity.
 
-[![License](https://img.shields.io/badge/license-GPLv3%20%2B%20Commons%20Clause-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-blue)](./LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/helson-lin/Dual)](https://github.com/helson-lin/Dual/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/helson-lin/Dual/total)](https://github.com/helson-lin/Dual/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey)](https://github.com/helson-lin/Dual)
@@ -131,7 +131,7 @@ Dual/
 ├── .github/workflows/         # GitHub Actions build & release workflow
 ├── assets/                    # README screenshot(s)
 ├── background.png             # DMG installer background art
-└── LICENSE                    # GPLv3 + Commons Clause license text
+└── LICENSE                    # GNU GPLv3 license text
 ```
 
 ## Troubleshooting
@@ -157,4 +157,4 @@ Issues and pull requests are welcome. The [Compatibility](#compatibility) table 
 
 ## License
 
-Dual is licensed under GNU GPLv3 with additional Commons Clause terms. Personal, non-commercial use only unless the copyright holder grants explicit written permission. Derivative works must retain the same license terms. See [LICENSE](./LICENSE) for the complete terms.
+Dual is licensed under the [GNU General Public License v3.0](./LICENSE). The GPL covers the code only: the "Dual" name and app icon are not licensed for use by modified versions or forks. See [TRADEMARKS.md](./TRADEMARKS.md).

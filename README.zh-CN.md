@@ -4,7 +4,7 @@
 
 把任意 macOS 应用克隆成一个拥有独立名称、Bundle ID 和身份的副本。
 
-[![License](https://img.shields.io/badge/license-GPLv3%20%2B%20Commons%20Clause-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-blue)](./LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/helson-lin/Dual)](https://github.com/helson-lin/Dual/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/helson-lin/Dual/total)](https://github.com/helson-lin/Dual/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey)](https://github.com/helson-lin/Dual)
@@ -131,7 +131,7 @@ Dual/
 ├── .github/workflows/         # GitHub Actions 构建与发布工作流
 ├── assets/                    # README 使用的截图
 ├── background.png             # DMG 安装界面背景图
-└── LICENSE                    # GPLv3 + Commons Clause 许可证文本
+└── LICENSE                    # GNU GPLv3 许可证文本
 ```
 
 ## 故障排查
@@ -157,4 +157,4 @@ scripts/remove-quarantine.sh /Applications/Dual.app
 
 ## 许可证
 
-Dual 采用 GNU GPLv3，并附加 Commons Clause 条款。除非版权所有者明确书面许可，否则仅限个人、非商业使用；衍生作品必须保留相同许可证条款。完整条款见 [LICENSE](./LICENSE)。
+Dual 采用 [GNU GPLv3](./LICENSE) 许可证。GPL 仅涵盖代码：“Dual”名称和应用图标不授权修改版或分支使用，详见 [TRADEMARKS.md](./TRADEMARKS.md)。
