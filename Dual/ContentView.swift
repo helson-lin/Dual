@@ -1366,6 +1366,10 @@ struct ContentView: View {
     }
 
     private func returnToHome() {
+        if cloneSuccess {
+            sourceAppPath = ""
+            appIcon = nil
+        }
         withAnimation(.easeInOut(duration: 0.2)) {
             showingLog = false
             errorText = ""
