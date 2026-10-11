@@ -105,6 +105,8 @@ fi
 
 
 echo "==> Building $SCHEME ($ARCH / $ARTIFACT_LABEL)"
+xcodebuild -version
+xcrun --sdk macosx --show-sdk-version
 xcodebuild "${XCODEBUILD_ARGS[@]}" clean archive
 
 APP_PATH="$ARCHIVE_PATH/Products/Applications/${SCHEME}.app"
