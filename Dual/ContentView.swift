@@ -216,6 +216,7 @@ struct ContentView: View {
         let destinationDirectory: String
         let clearDataBeforeClone: Bool
         let addCloneBadge: Bool
+        var preserveExistingIcon = false
     }
 
     private struct SuggestedApp: Identifiable {
@@ -1631,7 +1632,8 @@ struct ContentView: View {
             bundleIdentifier: request.bundleIdentifier,
             destinationDirectory: writableDirectory,
             clearDataBeforeClone: request.clearDataBeforeClone,
-            addCloneBadge: request.addCloneBadge
+            addCloneBadge: request.addCloneBadge,
+            preserveExistingIcon: request.preserveExistingIcon
         )
 
         if !ensureWritableDirectory(writableDirectory) {
@@ -1666,7 +1668,8 @@ struct ContentView: View {
             bundleIdentifier: record.bundleIdentifier,
             destinationDirectory: URL(fileURLWithPath: record.destinationAppPath).deletingLastPathComponent().path,
             clearDataBeforeClone: false,
-            addCloneBadge: record.addCloneBadge
+            addCloneBadge: record.addCloneBadge,
+            preserveExistingIcon: true
         ))
     }
 
@@ -1733,6 +1736,7 @@ struct ContentView: View {
                     bundleName: request.cloneName,
                     clearDataBeforeClone: request.clearDataBeforeClone,
                     addCloneBadge: request.addCloneBadge,
+                    preserveExistingIcon: request.preserveExistingIcon,
                     useAdminPrivileges: useAdminPrivileges,
                     localeIdentifier: nil,
                     logger: { line in

@@ -77,6 +77,7 @@ enum AppCloner {
         bundleName: String,
         clearDataBeforeClone: Bool,
         addCloneBadge: Bool,
+        preserveExistingIcon: Bool,
         useAdminPrivileges: Bool,
         localeIdentifier: String?,
         logger: @escaping (String) -> Void
@@ -98,16 +99,26 @@ enum AppCloner {
             )
         }
 
-        let badgeIconURL: URL?
-        if addCloneBadge {
+        let fileManager = FileManager.default
+        let iconURL: URL?
+        let bundledIcon = URL(fileURLWithPath: destinationApp).appendingPathComponent("Contents/Resources/DualCloneIcon.icns")
+        if preserveExistingIcon && fileManager.fileExists(atPath: destinationApp + "/Icon\r") {
+            iconURL = try createBadgeIcon(sourceIcon: NSWorkspace.shared.icon(forFile: destinationApp), addBadge: false)
+        } else if preserveExistingIcon && fileManager.fileExists(atPath: bundledIcon.path) {
+            let directory = fileManager.temporaryDirectory.appendingPathComponent("dual-icon-\(UUID())")
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let savedIcon = directory.appendingPathComponent("DualCloneIcon.icns")
+            try fileManager.copyItem(at: bundledIcon, to: savedIcon)
+            iconURL = savedIcon
+        } else if addCloneBadge {
             logger(L10n.string("cloner.log.createBadgeIcon", localeIdentifier: localeIdentifier))
-            badgeIconURL = try createBadgeIcon(sourceApp: sourceApp)
+            iconURL = try createBadgeIcon(sourceIcon: NSWorkspace.shared.icon(forFile: sourceApp), addBadge: true)
         } else {
-            badgeIconURL = nil
+            iconURL = nil
         }
         defer {
-            if let badgeIconURL {
-                try? FileManager.default.removeItem(at: badgeIconURL.deletingLastPathComponent())
+            if let iconURL {
+                try? FileManager.default.removeItem(at: iconURL.deletingLastPathComponent())
             }
         }
 
@@ -139,7 +150,8 @@ enum AppCloner {
                 destinationApp: destinationApp,
                 bundleIdentifier: bundleIdentifier,
                 bundleName: bundleName,
-                badgeIconPath: badgeIconURL?.path,
+                addCloneBadge: addCloneBadge,
+                badgeIconPath: iconURL?.path,
                 telegramIdentityLabel: telegramIdentityLabel,
                 discordUserDataPath: discordUserDataPath,
                 logger: logger
@@ -155,8 +167,8 @@ enum AppCloner {
         logger(L10n.string("cloner.log.copyApp", localeIdentifier: localeIdentifier))
         try run("/usr/bin/ditto", ["--norsrc", "--noqtn", sourceApp, destinationApp], logger: logger)
 
-        if let badgeIconURL {
-            try installBadgeIcon(from: badgeIconURL, appPath: destinationApp)
+        if let iconURL {
+            try installBadgeIcon(from: iconURL, appPath: destinationApp)
         }
         let infoPlist = "\(destinationApp)/Contents/Info.plist"
         logger(L10n.string("cloner.log.writeInfoPlist", localeIdentifier: localeIdentifier))
@@ -165,7 +177,8 @@ enum AppCloner {
             sourceAppPath: sourceApp,
             bundleIdentifier: bundleIdentifier,
             bundleName: bundleName,
-            addCloneBadge: addCloneBadge
+            addCloneBadge: addCloneBadge,
+            hasCloneIcon: iconURL != nil
         )
         if let telegramIdentityLabel {
             try patchTelegramIdentity(
@@ -302,7 +315,8 @@ enum AppCloner {
         sourceAppPath: String,
         bundleIdentifier: String,
         bundleName: String,
-        addCloneBadge: Bool
+        addCloneBadge: Bool,
+        hasCloneIcon: Bool
     ) throws {
         let url = URL(fileURLWithPath: infoPlistPath)
         let data = try Data(contentsOf: url)
@@ -317,7 +331,7 @@ enum AppCloner {
         plist["CFBundleDisplayName"] = bundleName
         plist["DualSourceApplicationPath"] = sourceAppPath
         plist["DualCloneBadgeEnabled"] = addCloneBadge
-        if addCloneBadge {
+        if hasCloneIcon {
             plist["CFBundleIconFile"] = "DualCloneIcon.icns"
             plist.removeValue(forKey: "CFBundleIconName")
             plist.removeValue(forKey: "CFBundleIcons")
@@ -329,14 +343,14 @@ enum AppCloner {
         try output.write(to: url, options: .atomic)
     }
 
-    private static func createBadgeIcon(sourceApp: String) throws -> URL {
+    private static func createBadgeIcon(sourceIcon: NSImage, addBadge: Bool) throws -> URL {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
             .appendingPathComponent("dual-icon-\(UUID().uuidString)", isDirectory: true)
         let iconset = directory.appendingPathComponent("DualCloneIcon.iconset", isDirectory: true)
         try fileManager.createDirectory(at: iconset, withIntermediateDirectories: true)
 
-        let sourceIcon = NSWorkspace.shared.icon(forFile: sourceApp)
+        // Existing Finder custom icons are rendered without applying a second badge.
         let variants = [
             ("icon_16x16.png", 16),
             ("icon_16x16@2x.png", 32),
@@ -351,7 +365,7 @@ enum AppCloner {
         ]
 
         for (filename, pixels) in variants {
-            let png = try cloneBadgedPNG(sourceIcon: sourceIcon, pixels: pixels)
+            let png = try cloneBadgedPNG(sourceIcon: sourceIcon, pixels: pixels, addBadge: addBadge)
             try png.write(to: iconset.appendingPathComponent(filename), options: .atomic)
         }
 
@@ -360,7 +374,7 @@ enum AppCloner {
         return output
     }
 
-    private static func cloneBadgedPNG(sourceIcon: NSImage, pixels: Int) throws -> Data {
+    private static func cloneBadgedPNG(sourceIcon: NSImage, pixels: Int, addBadge: Bool) throws -> Data {
         guard
             let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
@@ -386,6 +400,12 @@ enum AppCloner {
         defer { NSGraphicsContext.restoreGraphicsState() }
 
         sourceIcon.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
+        guard addBadge else {
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                throw AppClonerError.commandFailed(command: "Create Clone Icon", output: "Failed to encode \(pixels)px bitmap")
+            }
+            return png
+        }
 
         let side = CGFloat(pixels) * 0.3
         let inset = CGFloat(pixels) * 0.035
@@ -831,6 +851,7 @@ enum AppCloner {
         destinationApp: String,
         bundleIdentifier: String,
         bundleName: String,
+        addCloneBadge: Bool,
         badgeIconPath: String?,
         telegramIdentityLabel: String?,
         discordUserDataPath: String?,
@@ -872,7 +893,7 @@ enum AppCloner {
         /usr/bin/plutil -replace CFBundleName -string \(shellEscape(bundleName)) \(shellEscape(infoPlist))
         /usr/bin/plutil -replace CFBundleDisplayName -string \(shellEscape(bundleName)) \(shellEscape(infoPlist))
         /usr/bin/plutil -replace DualSourceApplicationPath -string \(shellEscape(sourceApp)) \(shellEscape(infoPlist))
-        /usr/bin/plutil -replace DualCloneBadgeEnabled -bool \(badgeIconPath == nil ? "NO" : "YES") \(shellEscape(infoPlist))
+        /usr/bin/plutil -replace DualCloneBadgeEnabled -bool \(addCloneBadge ? "YES" : "NO") \(shellEscape(infoPlist))
         \(badgePatchScript)
         /usr/bin/plutil -remove ElectronAsarIntegrity \(shellEscape(infoPlist)) 2>/dev/null || true
         \(telegramPatchScript)
