@@ -80,8 +80,11 @@ struct WindowConfigurator: NSViewRepresentable {
             let toolbar = NSToolbar()
             toolbar.showsBaselineSeparator = false
             window.toolbar = toolbar
-            window.toolbarStyle = .unified
         }
+        // SwiftUI may create the toolbar before this configurator runs.
+        // Apply its style regardless of who created it.
+        window.toolbarStyle = .unified
+        window.toolbar?.showsBaselineSeparator = false
         if let toolbar = window.toolbar,
            !toolbar.items.contains(where: { $0.itemIdentifier == .flexibleSpace }) {
             toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: 0)
@@ -283,9 +286,6 @@ struct ContentView: View {
     /// Horizontal inset of the scrolling content, matching the design's `clamp(26px, 5vw, 54px)`.
     private static let contentInset: CGFloat = 54
 
-    /// Drives both the SwiftUI toolbar and the stretched titlebar behind it.
-    private static let toolbarHeight: CGFloat = 52
-
     private var primaryActionTitle: String {
         if isProcessing {
             return localized("common.processing")
@@ -318,8 +318,6 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                topToolbar
-
                 if showingLog {
                     logPanel
                         .padding(24)
@@ -327,7 +325,6 @@ struct ContentView: View {
                     workspace
                 }
             }
-            .ignoresSafeArea(.container, edges: .top)
 
             if !hasSeenWelcome {
                 WelcomeOverlay(palette: palette) {
@@ -348,8 +345,12 @@ struct ContentView: View {
         .environment(\.dualPalette, palette)
         .frame(width: WindowConfigurator.fixedContentSize.width, height: WindowConfigurator.fixedContentSize.height)
         .background(WindowConfigurator())
+        .modifier(DualTitleToolbar())
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                if isProcessing && !showingLog {
+                    processingToolbarButton
+                }
                 Button {
                     NSWorkspace.shared.open(URL(string: "https://github.com/helson-lin/Dual")!)
                 } label: {
@@ -408,65 +409,29 @@ struct ContentView: View {
 
     // MARK: - Toolbar
 
-    private var topToolbar: some View {
-        HStack(spacing: 18) {
-            // Clears the traffic lights (they end at x ≈ 80 from the window edge)
-            // and, with the stack's own 18pt spacing, keeps the design's gap
-            // between them and the first label.
-            Color.clear
-                .frame(width: 58, height: 1)
-
-            Text("Dual")
-                .font(.system(size: 14, weight: .bold))
-                .tracking(-0.15)
-                .lineLimit(1)
-                .fixedSize()
-
-            // Rectangle()
-            //     .fill(palette.line)
-            //     .frame(width: 1, height: 20)
-
-            // Text(localized("toolbar.workspace"))
-            //     .font(.system(size: 13, weight: .semibold))
-            //     .foregroundColor(palette.muted)
-            //     .lineLimit(1)
-            //     .fixedSize()
-
-            Spacer(minLength: 12)
-
-            if isProcessing && !showingLog {
-                Button {
-                    withAnimation(motion(DualMotion.standard)) {
-                        showingLog = true
-                    }
-                } label: {
-                    HStack(spacing: 7) {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.65)
-                        Text(localized("log.status.processing"))
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(palette.accent)
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(palette.accentSoft)
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(localized("log.status.processing"))
+    private var processingToolbarButton: some View {
+        Button {
+            withAnimation(motion(DualMotion.standard)) {
+                showingLog = true
             }
+        } label: {
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.65)
+                Text(localized("log.status.processing"))
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(palette.accent)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(palette.accentSoft)
+            )
         }
-        .padding(.horizontal, 22)
-        .frame(height: Self.toolbarHeight)
-        .background(.regularMaterial)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(palette.line)
-                .frame(height: 1)
-        }
+        .buttonStyle(.plain)
+        .help(localized("log.status.processing"))
     }
 
     // MARK: - Workspace
@@ -1869,5 +1834,36 @@ struct ContentView: View {
 
     private func localized(_ key: String, _ arguments: CVarArg...) -> String {
         L10n.string(key, arguments: arguments)
+    }
+}
+
+private struct DualTitleToolbar: ViewModifier {
+    private var title: some View {
+        Text("Dual")
+            .font(.system(size: 14, weight: .bold))
+            .tracking(-0.15)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 12)
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            content.toolbar {
+                ToolbarItem(placement: .navigation) { title }
+                    .sharedBackgroundVisibility(.hidden)
+            }
+        } else {
+            content.toolbar {
+                ToolbarItem(placement: .navigation) { title }
+            }
+        }
+#else
+        content.toolbar {
+            ToolbarItem(placement: .navigation) { title }
+        }
+#endif
     }
 }
