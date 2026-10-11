@@ -26,7 +26,9 @@ struct DualApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(checkForUpdates: updaterController.map { controller in
+                { controller.updater.checkForUpdates() }
+            })
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

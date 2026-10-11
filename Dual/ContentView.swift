@@ -73,17 +73,18 @@ struct WindowConfigurator: NSViewRepresentable {
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
         window.backgroundColor = .clear
 
-        // An empty unified toolbar is what makes AppKit lay the traffic lights out
-        // on the unified titlebar line, i.e. the vertical center of `toolbarHeight`.
-        // Without it they sit in the 28pt titlebar, well above the toolbar content.
+        // Native toolbar items receive clicks in the titlebar; SwiftUI content behind it does not.
         if window.toolbar == nil {
             let toolbar = NSToolbar()
             toolbar.showsBaselineSeparator = false
             window.toolbar = toolbar
             window.toolbarStyle = .unified
+        }
+        if let toolbar = window.toolbar,
+           !toolbar.items.contains(where: { $0.itemIdentifier == .flexibleSpace }) {
+            toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: 0)
         }
         // Full screen is off, and the window has a single fixed size: nothing
         // to zoom or drag-resize to, so both are disabled outright.
@@ -209,6 +210,7 @@ private struct FocuslessTextField: NSViewRepresentable {
 
 
 struct ContentView: View {
+    let checkForUpdates: (() -> Void)?
     private struct CloneRequest {
         let sourceAppPath: String
         let cloneName: String
@@ -346,6 +348,39 @@ struct ContentView: View {
         .environment(\.dualPalette, palette)
         .frame(width: WindowConfigurator.fixedContentSize.width, height: WindowConfigurator.fixedContentSize.height)
         .background(WindowConfigurator())
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/helson-lin/Dual")!)
+                } label: {
+                    Image("GitHubMark")
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .frame(width: 30, height: 30)
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(palette.muted)
+                .help(localized("menu.viewOnGitHub"))
+                .accessibilityLabel(localized("menu.viewOnGitHub"))
+
+                Button {
+                    checkForUpdates?()
+                } label: {
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(palette.muted)
+                        .frame(height: 30)
+                        .padding(.horizontal, 10)
+                }
+                .buttonStyle(.plain)
+                .disabled(checkForUpdates == nil)
+                .help(localized("menu.checkForUpdates"))
+                .accessibilityHint(localized("menu.checkForUpdates"))
+            }
+        }
         .sheet(isPresented: $showClonePanel) {
             cloneSheet.frame(width: 520)
         }
